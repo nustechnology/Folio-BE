@@ -1,0 +1,46 @@
+{
+  "name": "nus-express-template",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build --clean && tsc",
+    "lint": "eslint src/**/*.ts",
+    "start": "yarn lint && yarn build && yarn dev",
+    "dev": "tsx watch src/index.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "npx prisma migrate dev",
+    "db:migrate-prod": "npx prisma migrate deploy",
+    "db:seed": "ts-node src/prisma/seeds/**.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.17.1",
+    "joi": "^17.9.2",
+    "jsonwebtoken": "^9.0.0",
+    "pg": "^8.7.3",
+    "reflect-metadata": "^0.1.13",
+    "swagger-ui-express": "^5.0.1",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.2",
+    "@types/cors": "^2.8.12",
+    "@types/express": "^4.17.13",
+    "@types/joi": "^17.2.3",
+    "@types/jsonwebtoken": "^9.0.2",
+    "@types/node": "^22.20.0",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
+    "eslint": "^10.5.0",
+    "nodemon": "^2.0.16",
+    "prisma": "^7.8.0",
+    "ts-node": "^10.7.0",
+    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.8.3"
+  }
+}

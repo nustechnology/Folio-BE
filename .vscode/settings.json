@@ -1,0 +1,7 @@
+{
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "editor.renderWhitespace": "all",
+  "editor.tabSize": 2,
+  "editor.detectIndentation": false
+}
