@@ -1,22 +1,35 @@
 import { Router } from 'express';
 
-import AuthController from '../controllers/auth.controller.js';
-import { asyncHandler } from '../middlewares/async-handler.middleware.js';
-import { validateBody } from '../middlewares/validation.middleware.js';
-import { loginSchema, signUpSchema } from './validators/auth.validator.js';
+import AuthController from '~/api/controllers/auth.controller';
+import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
+import { auth } from '~/api/middlewares/auth.middleware';
+import { validateBody } from '~/api/middlewares/validation.middleware';
+import { loginSchema, refreshSchema, signUpSchema } from '~/api/routes/validators/auth.validator';
 
 const router = Router();
 
 router.post(
   '/sign-up',
   validateBody(signUpSchema),
-  asyncHandler(AuthController.signUp)
+  asyncHandler(AuthController.signUp),
 );
 
 router.post(
   '/login',
   validateBody(loginSchema),
-  asyncHandler(AuthController.login)
+  asyncHandler(AuthController.login),
+);
+
+router.post(
+  '/refresh',
+  validateBody(refreshSchema),
+  asyncHandler(AuthController.refresh),
+);
+
+router.post(
+  '/logout',
+  auth,
+  asyncHandler(AuthController.logout),
 );
 
 export default router;

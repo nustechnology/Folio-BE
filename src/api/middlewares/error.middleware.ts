@@ -1,8 +1,8 @@
 import { ErrorRequestHandler } from 'express';
 
-import logger from '../../config/logger.js';
-import { env } from '../../config/enviroment.js';
-import { AppError } from '../errors/app.error.js';
+import logger from '~/config/logger';
+import { env } from '~/config/enviroment';
+import { AppError } from '~/api/errors/app.error';
 
 export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
   if (res.headersSent) {

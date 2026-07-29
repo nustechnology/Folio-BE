@@ -1,11 +1,11 @@
-import UserRepository from '../../prisma/repositories/user.repository.js';
+import UserRepository from '~/prisma/repositories/user.repository';
 
-const getOne = async (id: number) => {
+const getOne = async (id: string) => {
   return UserRepository.findOne(id);
 };
 
 const update = async (
-  id: number,
+  id: string,
   payload: { name?: string; email?: string; address?: string }
 ) => {
   return UserRepository.update(id, payload);

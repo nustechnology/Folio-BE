@@ -1,7 +1,7 @@
 import Joi from 'joi';
 
 export const userIdParamsSchema = Joi.object({
-  id: Joi.string().pattern(/^(me|[1-9]\d*)$/).required(),
+  id: Joi.string().required(),
 });
 
 export const updateProfileSchema = Joi.object({

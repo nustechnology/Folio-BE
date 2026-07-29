@@ -1,7 +1,7 @@
 import { NextFunction, RequestHandler } from 'express';
 import Joi from 'joi';
 
-import { AppError } from '../errors/app.error.js';
+import { AppError } from '~/api/errors/app.error';
 
 const forwardValidationError = (error: unknown, next: NextFunction) => {
   if (Joi.isError(error)) {

@@ -1,14 +1,18 @@
 {
   "compilerOptions": {
-    "module": "NodeNext",
+    "module": "Preserve",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "target": "ES2023",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "noImplicitAny": true,
-    "moduleResolution": "NodeNext",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["src/*"]
+    },
     "rootDir": "./src",
     "sourceMap": true,
     "outDir": "dist",
@@ -19,5 +23,4 @@
   "exclude": [
     "node_modules"
   ],
-  "files": ["src/custom.d.ts"]
 }

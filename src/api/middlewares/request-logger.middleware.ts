@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { NextFunction, Request, Response } from 'express';
 
-import logger from '../../config/logger.js';
-import { requestContext } from '../../config/request-context.js';
+import logger from '~/config/logger';
+import { requestContext } from '~/config/request-context';
 
 const getRequestId = (req: Request) => {
   const requestId = req.header('x-request-id');

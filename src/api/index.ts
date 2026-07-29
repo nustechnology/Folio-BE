@@ -1,10 +1,10 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
-import { openApiDocument } from './docs/openapi.js';
-import { errorHandler } from './middlewares/error.middleware.js';
-import { requestLogger } from './middlewares/request-logger.middleware.js';
-import routes from './routes/index.js';
+import { openApiDocument } from '~/api/docs/openapi';
+import { errorHandler } from '~/api/middlewares/error.middleware';
+import { requestLogger } from '~/api/middlewares/request-logger.middleware';
+import routes from '~/api/routes/index';
 
 interface ApiInterface {
   server(): Promise<Application>;

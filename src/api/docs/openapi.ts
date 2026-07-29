@@ -4,7 +4,7 @@ export const openApiDocument = {
     title: 'Express Prisma API',
     version: '1.0.0',
     description:
-      'API documentation for authentication, users, posts, and comments.',
+      'API documentation for authentication and users.',
   },
   servers: [
     {
@@ -21,20 +21,12 @@ export const openApiDocument = {
       name: 'Users',
       description: 'Authenticated user operations',
     },
-    {
-      name: 'Posts',
-      description: 'Posts owned by the authenticated user',
-    },
-    {
-      name: 'Comments',
-      description: 'Comments owned by the authenticated user',
-    },
   ],
   paths: {
     '/api/v1/auth/sign-up': {
       post: {
         tags: ['Authentication'],
-        summary: 'Create a user account',
+        summary: 'Create a user account and return tokens',
         operationId: 'signUp',
         requestBody: {
           required: true,
@@ -48,11 +40,31 @@ export const openApiDocument = {
         },
         responses: {
           '200': {
-            description: 'Account created',
+            description: 'Account created and logged in',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/UserSuccessResponse',
+                  $ref: '#/components/schemas/SignUpSuccessResponse',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Validation error (invalid email, short password, password mismatch)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '409': {
+            description: 'Email already registered',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
                 },
               },
             },
@@ -84,10 +96,112 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/LoginSuccessResponse',
+                  $ref: '#/components/schemas/AuthSuccessResponse',
                 },
               },
             },
+          },
+          '400': {
+            description: 'Validation error',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '401': {
+            description: 'Invalid email or password',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError',
+          },
+        },
+      },
+    },
+    '/api/v1/auth/refresh': {
+      post: {
+        tags: ['Authentication'],
+        summary: 'Refresh access and refresh tokens (token rotation)',
+        operationId: 'refresh',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/RefreshRequest',
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'New tokens issued',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/AuthSuccessResponse',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Missing refresh token',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '401': {
+            description: 'Expired or invalid refresh token',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError',
+          },
+        },
+      },
+    },
+    '/api/v1/auth/logout': {
+      post: {
+        tags: ['Authentication'],
+        summary: 'Log out and invalidate refresh token',
+        operationId: 'logout',
+        security: [
+          {
+            bearerAuth: [],
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Logged out successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/LogoutSuccessResponse',
+                },
+              },
+            },
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized',
           },
           '500': {
             $ref: '#/components/responses/InternalError',
@@ -100,7 +214,7 @@ export const openApiDocument = {
         tags: ['Users'],
         summary: 'Get a user',
         description:
-          'Use a numeric user ID, or use `me` to retrieve the user identified by the bearer token.',
+          'Use a user ID, or use `me` to retrieve the user identified by the bearer token.',
         operationId: 'getUser',
         security: [
           {
@@ -112,10 +226,9 @@ export const openApiDocument = {
             name: 'id',
             in: 'path',
             required: true,
-            description: 'Numeric user ID or `me`',
+            description: 'User ID or `me`',
             schema: {
               type: 'string',
-              pattern: '^(me|[0-9]+)$',
               example: 'me',
             },
           },
@@ -132,81 +245,6 @@ export const openApiDocument = {
             },
           },
           '401': {
-            description: 'Missing or invalid bearer token',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
-          },
-          '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
-    },
-    '/api/v1/posts': {
-      get: {
-        tags: ['Posts'],
-        summary: 'List the authenticated user’s posts',
-        operationId: 'getUserPosts',
-        security: [
-          {
-            bearerAuth: [],
-          },
-        ],
-        responses: {
-          '200': {
-            description: 'Posts retrieved',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/PostsSuccessResponse',
-                },
-              },
-            },
-          },
-          '401': {
-            $ref: '#/components/responses/Unauthorized',
-          },
-          '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
-      post: {
-        tags: ['Posts'],
-        summary: 'Create a post for the authenticated user',
-        operationId: 'createPost',
-        security: [
-          {
-            bearerAuth: [],
-          },
-        ],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                $ref: '#/components/schemas/CreatePostRequest',
-              },
-            },
-          },
-        },
-        responses: {
-          '200': {
-            description: 'Post created',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/PostSuccessResponse',
-                },
-              },
-            },
-          },
-          '401': {
             $ref: '#/components/responses/Unauthorized',
           },
           '500': {
@@ -215,74 +253,7 @@ export const openApiDocument = {
         },
       },
     },
-    '/api/v1/comments': {
-      get: {
-        tags: ['Comments'],
-        summary: 'List the authenticated user’s comments',
-        operationId: 'getUserComments',
-        security: [
-          {
-            bearerAuth: [],
-          },
-        ],
-        responses: {
-          '200': {
-            description: 'Comments retrieved',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/CommentsSuccessResponse',
-                },
-              },
-            },
-          },
-          '401': {
-            $ref: '#/components/responses/Unauthorized',
-          },
-          '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
-      post: {
-        tags: ['Comments'],
-        summary: 'Create a comment for the authenticated user',
-        operationId: 'createComment',
-        security: [
-          {
-            bearerAuth: [],
-          },
-        ],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                $ref: '#/components/schemas/CreateCommentRequest',
-              },
-            },
-          },
-        },
-        responses: {
-          '200': {
-            description: 'Comment created',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/CommentSuccessResponse',
-                },
-              },
-            },
-          },
-          '401': {
-            $ref: '#/components/responses/Unauthorized',
-          },
-          '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
-    },
+
   },
   components: {
     securitySchemes: {
@@ -318,15 +289,8 @@ export const openApiDocument = {
       SignUpRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'email', 'password'],
+        required: ['email', 'password', 'confirmPassword'],
         properties: {
-          name: {
-            type: 'string',
-            minLength: 3,
-            maxLength: 30,
-            pattern: '^[a-zA-Z0-9]+$',
-            example: 'alice',
-          },
           email: {
             type: 'string',
             format: 'email',
@@ -334,9 +298,13 @@ export const openApiDocument = {
           },
           password: {
             type: 'string',
-            minLength: 3,
-            maxLength: 30,
-            pattern: '^[a-zA-Z0-9]{3,30}$',
+            minLength: 4,
+            description: 'Password (minimum 4 characters)',
+            example: 'password123',
+          },
+          confirmPassword: {
+            type: 'string',
+            description: 'Must match the password field',
             example: 'password123',
           },
         },
@@ -353,21 +321,31 @@ export const openApiDocument = {
           },
           password: {
             type: 'string',
-            minLength: 3,
-            maxLength: 30,
-            pattern: '^[a-zA-Z0-9]{3,30}$',
+            minLength: 4,
             example: 'password123',
+          },
+        },
+      },
+      RefreshRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['refreshToken'],
+        properties: {
+          refreshToken: {
+            type: 'string',
+            description: 'The refresh token received from a previous login or refresh',
+            example: 'eyJhbGciOiJIUzI1NiIs...',
           },
         },
       },
       User: {
         type: 'object',
-        required: ['id', 'email', 'createdAt', 'updatedAt'],
+        required: ['id', 'name', 'email', 'createdAt', 'lastActiveAt'],
         properties: {
           id: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
+            type: 'string',
+            format: 'uuid',
+            example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
           },
           email: {
             type: 'string',
@@ -376,188 +354,87 @@ export const openApiDocument = {
           },
           name: {
             type: 'string',
-            nullable: true,
             example: 'alice',
           },
           createdAt: {
             type: 'string',
             format: 'date-time',
           },
-          updatedAt: {
+          lastActiveAt: {
             type: 'string',
             format: 'date-time',
           },
         },
       },
-      UserSummary: {
+
+      SignUpSuccessResponse: {
         type: 'object',
-        required: ['id', 'email'],
+        required: ['status', 'data'],
         properties: {
-          id: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          email: {
+          status: {
             type: 'string',
-            format: 'email',
-            example: 'alice@example.com',
+            enum: ['success'],
           },
-          name: {
-            type: 'string',
-            nullable: true,
-            example: 'alice',
-          },
-        },
-      },
-      Post: {
-        type: 'object',
-        required: [
-          'id',
-          'title',
-          'authorId',
-          'createdAt',
-          'updatedAt',
-        ],
-        properties: {
-          id: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          title: {
-            type: 'string',
-            example: 'My first post',
-          },
-          content: {
-            type: 'string',
-            nullable: true,
-            example: 'Post content',
-          },
-          authorId: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          createdAt: {
-            type: 'string',
-            format: 'date-time',
-          },
-          updatedAt: {
-            type: 'string',
-            format: 'date-time',
-          },
-        },
-      },
-      Comment: {
-        type: 'object',
-        required: [
-          'id',
-          'content',
-          'postId',
-          'userId',
-          'createdAt',
-          'updatedAt',
-        ],
-        properties: {
-          id: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          content: {
-            type: 'string',
-            example: 'Useful post',
-          },
-          postId: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          userId: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          createdAt: {
-            type: 'string',
-            format: 'date-time',
-          },
-          updatedAt: {
-            type: 'string',
-            format: 'date-time',
-          },
-        },
-      },
-      PostWithComments: {
-        allOf: [
-          {
-            $ref: '#/components/schemas/Post',
-          },
-          {
+          data: {
             type: 'object',
-            required: ['comments'],
+            required: ['user', 'accessToken', 'refreshToken'],
             properties: {
-              comments: {
-                type: 'array',
-                items: {
-                  $ref: '#/components/schemas/Comment',
-                },
+              user: {
+                $ref: '#/components/schemas/User',
+              },
+              accessToken: {
+                type: 'string',
+                description: 'JWT access token (15 minute expiry)',
+              },
+              refreshToken: {
+                type: 'string',
+                description: 'JWT refresh token (30 day expiry)',
               },
             },
           },
-        ],
+        },
       },
-      CommentWithRelations: {
+      AuthSuccessResponse: {
         type: 'object',
-        required: ['id', 'content', 'post', 'user'],
+        required: ['status', 'data'],
         properties: {
-          id: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
-          },
-          content: {
+          status: {
             type: 'string',
-            example: 'Useful post',
+            enum: ['success'],
           },
-          post: {
-            $ref: '#/components/schemas/Post',
-          },
-          user: {
-            $ref: '#/components/schemas/UserSummary',
+          data: {
+            type: 'object',
+            required: ['accessToken', 'refreshToken'],
+            properties: {
+              accessToken: {
+                type: 'string',
+                description: 'JWT access token (15 minute expiry)',
+              },
+              refreshToken: {
+                type: 'string',
+                description: 'JWT refresh token (30 day expiry)',
+              },
+            },
           },
         },
       },
-      CreatePostRequest: {
+      LogoutSuccessResponse: {
         type: 'object',
-        additionalProperties: false,
-        required: ['title'],
+        required: ['status', 'data'],
         properties: {
-          title: {
+          status: {
             type: 'string',
-            example: 'My first post',
+            enum: ['success'],
           },
-          content: {
-            type: 'string',
-            nullable: true,
-            example: 'Post content',
-          },
-        },
-      },
-      CreateCommentRequest: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['content', 'postId'],
-        properties: {
-          content: {
-            type: 'string',
-            example: 'Useful post',
-          },
-          postId: {
-            type: 'integer',
-            format: 'int32',
-            example: 1,
+          data: {
+            type: 'object',
+            required: ['success'],
+            properties: {
+              success: {
+                type: 'boolean',
+                enum: [true],
+              },
+            },
           },
         },
       },
@@ -580,108 +457,7 @@ export const openApiDocument = {
           },
         },
       },
-      LoginSuccessResponse: {
-        type: 'object',
-        required: ['status', 'data'],
-        properties: {
-          status: {
-            type: 'string',
-            enum: ['success'],
-          },
-          data: {
-            type: 'object',
-            required: ['token'],
-            properties: {
-              token: {
-                type: 'string',
-                description: 'JWT access token valid for one day',
-              },
-            },
-          },
-        },
-      },
-      PostsSuccessResponse: {
-        type: 'object',
-        required: ['status', 'data'],
-        properties: {
-          status: {
-            type: 'string',
-            enum: ['success'],
-          },
-          data: {
-            type: 'object',
-            required: ['posts'],
-            properties: {
-              posts: {
-                type: 'array',
-                items: {
-                  $ref: '#/components/schemas/PostWithComments',
-                },
-              },
-            },
-          },
-        },
-      },
-      PostSuccessResponse: {
-        type: 'object',
-        required: ['status', 'data'],
-        properties: {
-          status: {
-            type: 'string',
-            enum: ['success'],
-          },
-          data: {
-            type: 'object',
-            required: ['post'],
-            properties: {
-              post: {
-                $ref: '#/components/schemas/Post',
-              },
-            },
-          },
-        },
-      },
-      CommentsSuccessResponse: {
-        type: 'object',
-        required: ['status', 'data'],
-        properties: {
-          status: {
-            type: 'string',
-            enum: ['success'],
-          },
-          data: {
-            type: 'object',
-            required: ['comments'],
-            properties: {
-              comments: {
-                type: 'array',
-                items: {
-                  $ref: '#/components/schemas/CommentWithRelations',
-                },
-              },
-            },
-          },
-        },
-      },
-      CommentSuccessResponse: {
-        type: 'object',
-        required: ['status', 'data'],
-        properties: {
-          status: {
-            type: 'string',
-            enum: ['success'],
-          },
-          data: {
-            type: 'object',
-            required: ['comment'],
-            properties: {
-              comment: {
-                $ref: '#/components/schemas/Comment',
-              },
-            },
-          },
-        },
-      },
+
       ErrorResponse: {
         type: 'object',
         required: ['status', 'message'],
