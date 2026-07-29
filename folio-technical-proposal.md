@@ -154,6 +154,72 @@ These values are initial operating defaults, not permanent retrieval rules. Tune
 
 Semantic chunking makes an additional embedding pass over the smaller pre-split units before final passage embeddings are generated. This increases ingestion latency and embedding usage, but it does not affect online question latency. Intermediate unit embeddings are job-scoped and are not stored in `pgvector`; only final passage embeddings are indexed. The ingestion job retries provider failures using the normal model-gateway policy and must not activate the source version unless semantic passage creation and final indexing both complete.
 
+### OpenAI embedding pricing and Folio cost estimate
+
+As of July 29, 2026, OpenAI charges **$0.02 USD per one million input tokens** for `text-embedding-3-small`. Embedding requests have no output-token charge; the API returns vectors. Recheck the official pricing page before production launch because model pricing can change.
+
+```text
+Embedding cost = total input tokens / 1,000,000 × $0.02
+```
+
+| Input volume | Estimated cost |
+|---:|---:|
+| 1,000 tokens | $0.00002 |
+| 100,000 tokens | $0.002 |
+| 1 million tokens | $0.02 |
+| 10 million tokens | $0.20 |
+| 100 million tokens | $2.00 |
+| 1 billion tokens | $20.00 |
+
+OpenAI estimates approximately 800 tokens per page for pricing examples. At that density, `text-embedding-3-small` can process approximately **62,500 pages per US dollar**:
+
+```text
+Cost per 800-token page = 800 / 1,000,000 × $0.02
+                        = $0.000016
+```
+
+Folio performs two document-related embedding passes:
+
+1. Embed pre-split units to calculate semantic breakpoints.
+2. Embed the final assembled passages for storage in `pgvector`.
+
+The second pass can contain more tokens than the original source because of passage overlap. A representative 1,000-page ingestion estimate is:
+
+```text
+Original source:               1,000 × 800 = 800,000 tokens
+Semantic-breakpoint pass:                    800,000 tokens
+Final passages with overlap:                 900,000 tokens
+Total embedding input:                     1,700,000 tokens
+
+Estimated cost: 1.7 × $0.02 = $0.034
+```
+
+This example costs approximately **3.4 US cents per 1,000 pages**. It is an estimate: extraction output, tables, repeated headers, chunk overlap and tokenization differences change the actual token count.
+
+Query embedding cost is also low. For example, 1,000 standalone questions averaging 100 tokens produce 100,000 embedding tokens:
+
+```text
+1,000 queries × 100 tokens = 100,000 tokens
+Estimated cost = 0.1 × $0.02 = $0.002
+```
+
+For budgeting, calculate monthly embedding cost as:
+
+```text
+Monthly embedding tokens =
+    semantic pre-split unit tokens
+  + final indexed passage tokens
+  + standalone query tokens
+  + re-embedding tokens from updated source versions
+
+Monthly embedding cost =
+    monthly embedding tokens / 1,000,000 × $0.02
+```
+
+Embedding cost does not include chat generation, reranking, PostgreSQL, `pgvector`, object storage, Redis or network charges. In Folio, chat and reranking are expected to cost more than `text-embedding-3-small` under normal usage.
+
+Sources: [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and [OpenAI embedding model guide](https://developers.openai.com/api/docs/guides/embeddings#embedding-models).
+
 ## B. User Question and Answer
 
 | Step | Function | Tools/technology | Output |
