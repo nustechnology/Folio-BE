@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -11,39 +8,115 @@ datasource db {
 }
 
 model User {
-  id    Int     @id @default(autoincrement())
-  email String  @unique
-  name  String?
-  password String
-  address String?
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  authRef      String   @unique
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
 
-  posts Post[]
-  comments Comment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-model Post {
-  id        Int      @id @default(autoincrement())
-  title     String
-  content   String?
-  authorId  Int
-  author    User     @relation(fields: [authorId], references: [id])
-
-  comments Comment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  researchSpaces ResearchSpace[]
 }
 
-model Comment {
-  id        Int      @id @default(autoincrement())
-  content   String
-  postId    Int
-  post      Post     @relation(fields: [postId], references: [id])
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
+model ResearchSpace {
+  id                String   @id @default(uuid())
+  ownerId           String
+  owner             User     @relation(fields: [ownerId], references: [id])
+  name              String
+  researchObjective String
+  isArchived        Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastOpenedAt      DateTime @default(now())
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  sources       Source[]
+  conversations Conversation[]
+  notes         Note[]
+  notebook      Notebook?
+}
+
+enum OriginType {
+  UserCreated
+  SavedAssistantAnswer
+}
+
+model Source {
+  id                String   @id @default(uuid())
+  researchSpaceId   String
+  researchSpace     ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  sourceType        String
+  title             String
+  author            String?
+  originalFileUrl   String?
+  originalNoteId    String?
+  originalNote      Note?         @relation("SourceFromNote", fields: [originalNoteId], references: [id])
+  content           String
+  processingState   String        @default("pending")
+  retrievalIndexRef String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  citations Citation[]
+}
+
+model Conversation {
+  id                    String   @id @default(uuid())
+  researchSpaceId       String
+  researchSpace         ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  title                 String
+  messages              Json     @default("[]")
+  activeRetrievalScope  Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  notes Note[]
+}
+
+model Note {
+  id                    String       @id @default(uuid())
+  researchSpaceId       String
+  researchSpace         ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  title                 String
+  content               String
+  originType            OriginType
+  originConversationId  String?
+  originConversation    Conversation? @relation(fields: [originConversationId], references: [id])
+  originMessageId       String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  sourcesCreated     Source[]           @relation("SourceFromNote")
+  citationReferences NoteCitation[]
+}
+
+model Notebook {
+  id              String        @id @default(uuid())
+  researchSpaceId String        @unique
+  researchSpace   ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  content         String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Citation {
+  id                  String   @id @default(uuid())
+  sourceId            String
+  source              Source   @relation(fields: [sourceId], references: [id])
+  supportingPassage   String
+  pageReference       String?
+  paragraphReference  String?
+  sectionReference    String?
+  passageLocator      String?
+  createdAt           DateTime @default(now())
+
+  noteReferences NoteCitation[]
+}
+
+model NoteCitation {
+  noteId     String
+  note       Note     @relation(fields: [noteId], references: [id])
+  citationId String
+  citation   Citation @relation(fields: [citationId], references: [id])
+
+  @@id([noteId, citationId])
 }
