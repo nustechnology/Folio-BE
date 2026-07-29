@@ -12,8 +12,8 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
 
   const normalizedError =
     error instanceof Error ? error : new Error(String(error));
-  const statusCode =
-    normalizedError instanceof AppError ? normalizedError.statusCode : 500;
+  const isAppError = normalizedError instanceof AppError;
+  const statusCode = isAppError ? normalizedError.statusCode : 500;
   const logLevel = statusCode >= 500 ? 'error' : 'warn';
   const responseMessage =
     env.NODE_ENV === 'production' && statusCode >= 500
@@ -31,6 +31,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
   res.status(statusCode).json({
     status: 'error',
     message: responseMessage,
+    ...(isAppError && normalizedError.code && { code: normalizedError.code }),
     ...(env.NODE_ENV !== 'production' && { stack: normalizedError.stack }),
   });
 };

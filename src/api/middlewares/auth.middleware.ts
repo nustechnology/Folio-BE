@@ -15,7 +15,7 @@ export const auth = (req: Request, res: Response, next: NextFunction) => {
     const token = req.headers.authorization?.split(' ')[1];
 
     if (!token) {
-      next(new AppError('Invalid token', 401));
+      next(new AppError('Invalid token', 401, 'TOKEN_MISSING'));
       return;
     }
 
@@ -23,8 +23,12 @@ export const auth = (req: Request, res: Response, next: NextFunction) => {
     req.userId = payload.id;
 
     next();
-  } catch {
-    next(new AppError('Invalid token', 401));
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      next(new AppError('Access token expired', 401, 'TOKEN_EXPIRED'));
+      return;
+    }
+    next(new AppError('Invalid token', 401, 'TOKEN_INVALID'));
   }
 }
 

@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
 import UserRepository from '~/prisma/repositories/user.repository';
 import { AppError } from '~/api/errors/app.error';
@@ -45,12 +46,12 @@ const login = async (payload: { email: string; password: string }) => {
 
   const user = await UserRepository.findOneByEmail(email);
   if (!user) {
-    throw new AppError('Invalid email or password. Please try again.', 401);
+    throw new AppError('Invalid email or password. Please try again.', 401, 'INVALID_CREDENTIALS');
   }
 
   const checkPassword = await bcrypt.compare(password, user.password);
   if (!checkPassword) {
-    throw new AppError('Invalid email or password. Please try again.', 401);
+    throw new AppError('Invalid email or password. Please try again.', 401, 'INVALID_CREDENTIALS');
   }
 
   const accessToken = generateAccessToken(user.id);
@@ -69,23 +70,26 @@ const refresh = async (payload: { refreshToken: string }) => {
   let decoded: { id: string };
   try {
     decoded = verifyRefreshToken(rawRefreshToken);
-  } catch {
-    throw new AppError('Session expired. Please log in again.', 401);
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new AppError('Session expired. Please log in again.', 401, 'TOKEN_EXPIRED');
+    }
+    throw new AppError('Session expired. Please log in again.', 401, 'TOKEN_INVALID');
   }
 
   const user = await UserRepository.findById(decoded.id);
   if (!user || !user.refreshToken) {
-    throw new AppError('Session expired. Please log in again.', 401);
+    throw new AppError('Session expired. Please log in again.', 401, 'TOKEN_INVALID');
   }
 
   const isTokenValid = await bcrypt.compare(rawRefreshToken, user.refreshToken);
   if (!isTokenValid) {
-    throw new AppError('Session expired. Please log in again.', 401);
+    throw new AppError('Session expired. Please log in again.', 401, 'TOKEN_INVALID');
   }
 
   if (user.refreshTokenExpiresAt && user.refreshTokenExpiresAt < new Date()) {
     await UserRepository.updateRefreshToken(user.id, null, null);
-    throw new AppError('Session expired. Please log in again.', 401);
+    throw new AppError('Session expired. Please log in again.', 401, 'TOKEN_EXPIRED');
   }
 
   const newAccessToken = generateAccessToken(user.id);

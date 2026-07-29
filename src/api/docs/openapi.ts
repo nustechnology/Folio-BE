@@ -112,7 +112,7 @@ export const openApiDocument = {
             },
           },
           '401': {
-            description: 'Invalid email or password',
+            description: 'Invalid email or password (code: INVALID_CREDENTIALS)',
             content: {
               'application/json': {
                 schema: {
@@ -164,7 +164,7 @@ export const openApiDocument = {
             },
           },
           '401': {
-            description: 'Expired or invalid refresh token',
+            description: 'Expired (code: TOKEN_EXPIRED) or invalid (code: TOKEN_INVALID) refresh token',
             content: {
               'application/json': {
                 schema: {
@@ -265,7 +265,7 @@ export const openApiDocument = {
     },
     responses: {
       Unauthorized: {
-        description: 'Missing or invalid bearer token',
+        description: 'Missing (code: TOKEN_MISSING), expired (code: TOKEN_EXPIRED), or invalid (code: TOKEN_INVALID) bearer token',
         content: {
           'application/json': {
             schema: {
@@ -468,6 +468,11 @@ export const openApiDocument = {
           },
           message: {
             type: 'string',
+          },
+          code: {
+            type: 'string',
+            description: 'Error code for programmatic handling. Possible values: TOKEN_EXPIRED, TOKEN_INVALID, TOKEN_MISSING, INVALID_CREDENTIALS.',
+            nullable: true,
           },
           stack: {
             type: 'string',
