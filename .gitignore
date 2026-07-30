@@ -21,3 +21,9 @@ yarn-error.log*
 dockerdb
 
 /src/generated/prisma
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
