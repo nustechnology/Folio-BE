@@ -1,24 +1,24 @@
-import { NextFunction, Request, Response } from "express";
-import jwt from "jsonwebtoken";
+import { NextFunction, Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 
-import { StatusCodes } from "http-status-codes";
+import { StatusCodes } from 'http-status-codes';
 
-import { AppError } from "~/api/errors/app.error";
-import { ErrorCode } from "~/api/errors/error-codes";
-import UserRepository from "~/prisma/repositories/user.repository";
-import { verifyAccessToken } from "~/api/utils/token.util";
+import { AppError } from '~/api/errors/app.error';
+import { ErrorCode } from '~/api/errors/error-codes';
+import UserRepository from '~/prisma/repositories/user.repository';
+import { verifyAccessToken } from '~/api/utils/token.util';
 
 export const auth = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const token = req.headers.authorization?.split(" ")[1];
+    const token = req.headers.authorization?.split(' ')[1];
 
     if (!token) {
       next(
         new AppError(
-          "Authorization token is required",
+          'Authorization token is required',
           StatusCodes.UNAUTHORIZED,
-          ErrorCode.TOKEN_MISSING,
-        ),
+          ErrorCode.TOKEN_MISSING
+        )
       );
       return;
     }
@@ -31,20 +31,20 @@ export const auth = async (req: Request, res: Response, next: NextFunction) => {
     } catch {
       next(
         new AppError(
-          "Something went wrong. Please try again.",
+          'Something went wrong. Please try again.',
           StatusCodes.INTERNAL_SERVER_ERROR,
-          ErrorCode.INTERNAL_ERROR,
-        ),
+          ErrorCode.INTERNAL_ERROR
+        )
       );
       return;
     }
     if (!user || user.tokenVersion !== payload.tokenVersion) {
       next(
         new AppError(
-          "Token has been revoked. Please log in again.",
+          'Token has been revoked. Please log in again.',
           StatusCodes.UNAUTHORIZED,
-          ErrorCode.TOKEN_REVOKED,
-        ),
+          ErrorCode.TOKEN_REVOKED
+        )
       );
       return;
     }
@@ -56,10 +56,10 @@ export const auth = async (req: Request, res: Response, next: NextFunction) => {
     if (error instanceof jwt.TokenExpiredError) {
       next(
         new AppError(
-          "Access token has expired",
+          'Access token has expired',
           StatusCodes.UNAUTHORIZED,
-          ErrorCode.TOKEN_EXPIRED,
-        ),
+          ErrorCode.TOKEN_EXPIRED
+        )
       );
       return;
     }
@@ -69,14 +69,14 @@ export const auth = async (req: Request, res: Response, next: NextFunction) => {
     }
     next(
       new AppError(
-        "Authorization token is invalid or malformed",
+        'Authorization token is invalid or malformed',
         StatusCodes.UNAUTHORIZED,
-        ErrorCode.TOKEN_INVALID,
-      ),
+        ErrorCode.TOKEN_INVALID
+      )
     );
   }
 };
 
 export default {
-  auth,
+  auth
 };
