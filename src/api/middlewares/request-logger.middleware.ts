@@ -3,10 +3,15 @@ import { NextFunction, Request, Response } from 'express';
 
 import logger from '~/config/logger';
 import { requestContext } from '~/config/request-context';
+import {
+  REQUEST_ID_MAX_LENGTH,
+  DURATION_DECIMAL_PRECISION,
+  NANOSECONDS_PER_MILLISECOND,
+} from '~/api/utils/constants';
 
 const getRequestId = (req: Request) => {
   const requestId = req.header('x-request-id');
-  return requestId && requestId.length <= 128 ? requestId : randomUUID();
+  return requestId && requestId.length <= REQUEST_ID_MAX_LENGTH ? requestId : randomUUID();
 };
 
 export const requestLogger = (
@@ -23,13 +28,13 @@ export const requestLogger = (
 
     res.on('finish', () => {
       const durationMs =
-        Number(process.hrtime.bigint() - startTime) / 1_000_000;
+        Number(process.hrtime.bigint() - startTime) / NANOSECONDS_PER_MILLISECOND;
 
       logger.http('HTTP request completed', {
         method: req.method,
         path: req.path,
         statusCode: res.statusCode,
-        durationMs: Number(durationMs.toFixed(2)),
+        durationMs: Number(durationMs.toFixed(DURATION_DECIMAL_PRECISION)),
         userId: req.userId,
       });
     });

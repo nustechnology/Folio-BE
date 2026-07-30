@@ -2479,7 +2479,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"http-status-codes@npm:2.3.0":
+"http-status-codes@npm:2.3.0, http-status-codes@npm:^2.3.0":
   version: 2.3.0
   resolution: "http-status-codes@npm:2.3.0"
   checksum: 10c0/c2412188929e8eed6623eef468c62d0c3c082919c03e9b74fd79cfd060d11783dba44603e38a3cee52d26563fe32005913eaf6120aa8ba907da1238f3eaad5fe
@@ -3106,6 +3106,7 @@ __metadata:
     dotenv: "npm:^17.4.2"
     eslint: "npm:^10.5.0"
     express: "npm:^4.17.1"
+    http-status-codes: "npm:^2.3.0"
     joi: "npm:^17.9.2"
     jsonwebtoken: "npm:^9.0.0"
     nodemon: "npm:^2.0.16"
