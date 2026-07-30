@@ -7,6 +7,8 @@ export const NAME = {
   MAX_LENGTH: 100,
 } as const;
 
+export const OBJECTIVE_MAX_LENGTH = 500;
+
 export const REQUEST_ID_MAX_LENGTH = 128;
 
 export const DURATION_DECIMAL_PRECISION = 2;
