@@ -3,10 +3,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc --build --clean && tsc && tsc-alias",
+    "build": "yarn db:generate && tsc --build --clean && tsc && tsc-alias -f -fe .js",
     "lint": "eslint src/**/*.ts",
-    "start": "yarn lint && yarn build && yarn dev",
-    "dev": "tsx watch src/index.ts",
+    "start": "yarn db:generate && yarn lint && yarn build && yarn dev",
+    "dev": "yarn db:generate && tsx watch src/index.ts",
     "db:generate": "prisma generate",
     "db:migrate": "npx prisma migrate dev",
     "db:migrate-prod": "npx prisma migrate deploy",

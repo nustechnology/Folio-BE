@@ -25,3 +25,12 @@ export const env: EnvInterface = {
   ACCESS_TOKEN_EXPIRATION: process.env.ACCESS_TOKEN_EXPIRATION || '15m',
   REFRESH_TOKEN_EXPIRATION: process.env.REFRESH_TOKEN_EXPIRATION || '30d',
 };
+
+const missing = [
+  ['JWT_TOKEN_SECRET', env.JWT_TOKEN_SECRET],
+  ['REFRESH_TOKEN_SECRET', env.REFRESH_TOKEN_SECRET],
+].filter(([, v]) => !v).map(([k]) => k);
+
+if (missing.length > 0) {
+  throw new Error(`Missing required environment variable(s): ${missing.join(', ')}`);
+}

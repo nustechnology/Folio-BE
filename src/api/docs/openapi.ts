@@ -471,7 +471,15 @@ export const openApiDocument = {
           },
           code: {
             type: 'string',
-            description: 'Error code for programmatic handling. Possible values: TOKEN_EXPIRED, TOKEN_INVALID, TOKEN_MISSING, INVALID_CREDENTIALS.',
+            enum: [
+              'TOKEN_MISSING',
+              'TOKEN_EXPIRED',
+              'TOKEN_INVALID',
+              'TOKEN_REVOKED',
+              'INVALID_CREDENTIALS',
+              'EMAIL_EXISTS',
+              'INTERNAL_ERROR',
+            ],
             nullable: true,
           },
           stack: {

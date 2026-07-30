@@ -34,7 +34,7 @@ Routers are thin (Joi validation, middleware composition, response). Handlers co
 
 - **Entrypoint**: `src/index.ts`
 - **Express app**: `src/api/index.ts` — mounts `/api/v1`, Swagger UI at `/api-docs`, global error middleware
-- **Routes**: `src/api/routes/index.ts` — mounts `auth`, `users`, `posts`, `comments`
+- **Routes**: `src/api/routes/index.ts` — mounts `auth`, `users`
 - **Config**: `src/config/enviroment.ts` (note: misspelled filename), `logger.ts`, `request-context.ts`
 - **Prisma schema**: `src/prisma/schema.prisma`
 - **Prisma config**: `prisma.config.ts` (Prisma 7 uses `defineConfig`)

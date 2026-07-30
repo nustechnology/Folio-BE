@@ -7,6 +7,7 @@ import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
 import { BCRYPT_SALT_ROUNDS } from '~/api/utils/constants';
 import { exclude } from '~/api/utils/exclude';
+import { Prisma } from '~/generated/prisma/client';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -40,8 +41,11 @@ const signUp = async (payload: { email: string; password: string }) => {
       email,
       password: hashPassword,
     });
-  } catch {
-    throw new AppError('An account with this email already exists', StatusCodes.CONFLICT, ErrorCode.EMAIL_EXISTS);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new AppError('An account with this email already exists', StatusCodes.CONFLICT, ErrorCode.EMAIL_EXISTS);
+    }
+    throw error;
   }
 
   const accessToken = generateAccessToken(user.id, user.email, user.tokenVersion);

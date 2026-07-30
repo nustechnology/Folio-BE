@@ -1,6 +1,6 @@
 export const BCRYPT_SALT_ROUNDS = 10;
 
-export const PASSWORD_MIN_LENGTH = 4;
+export const PASSWORD_MIN_LENGTH = 8;
 
 export const NAME = {
   MIN_LENGTH: 1,
