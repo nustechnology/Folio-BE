@@ -1,18 +1,18 @@
-import prisma from "~/prisma/prisma.client";
-import { exclude } from "~/api/utils/exclude";
-import { Prisma } from "~/generated/prisma/client";
+import prisma from '~/prisma/prisma.client';
+import { exclude } from '~/api/utils/exclude';
+import { Prisma } from '~/generated/prisma/client';
 
 const create = async (payload: Prisma.UserCreateInput) => {
   const record = await prisma.user.create({
-    data: payload,
+    data: payload
   });
 
-  return exclude(record, ["password"]);
+  return exclude(record, ['password']);
 };
 
 const findById = async (id: string) => {
   const record = await prisma.user.findFirst({
-    where: { id },
+    where: { id }
   });
 
   if (!record) {
@@ -24,15 +24,15 @@ const findById = async (id: string) => {
 
 const findOne = async (id: string) => {
   const record = await prisma.user.findFirstOrThrow({
-    where: { id },
+    where: { id }
   });
 
-  return exclude(record, ["password"]);
+  return exclude(record, ['password']);
 };
 
 const findOneByEmail = async (email: string) => {
   const record = await prisma.user.findFirst({
-    where: { email },
+    where: { email }
   });
 
   if (!record) {
@@ -45,28 +45,28 @@ const findOneByEmail = async (email: string) => {
 const update = async (id: string, payload: Prisma.UserUpdateInput) => {
   const record = await prisma.user.update({
     where: { id },
-    data: payload,
+    data: payload
   });
 
-  return exclude(record, ["password"]);
+  return exclude(record, ['password']);
 };
 
 const updateRefreshToken = async (id: string, refreshToken: string | null) => {
   const record = await prisma.user.update({
     where: { id },
-    data: { refreshToken },
+    data: { refreshToken }
   });
 
-  return exclude(record, ["password"]);
+  return exclude(record, ['password']);
 };
 
 const incrementTokenVersion = async (id: string) => {
   const record = await prisma.user.update({
     where: { id },
-    data: { tokenVersion: { increment: 1 } },
+    data: { tokenVersion: { increment: 1 } }
   });
 
-  return exclude(record, ["password"]);
+  return exclude(record, ['password']);
 };
 
 export default {
@@ -76,5 +76,5 @@ export default {
   findOneByEmail,
   update,
   updateRefreshToken,
-  incrementTokenVersion,
+  incrementTokenVersion
 };

@@ -5,16 +5,29 @@ import { NAME, OBJECTIVE_MAX_LENGTH } from '~/api/utils/constants';
 export const listSpacesQuerySchema = Joi.object({
   search: Joi.string().allow('').optional(),
   sort: Joi.string()
-    .valid('recently-updated', 'recently-created', 'alphabetical-az', 'alphabetical-za')
-    .default('recently-updated'),
+    .valid(
+      'recently-updated',
+      'recently-created',
+      'alphabetical-az',
+      'alphabetical-za'
+    )
+    .default('recently-updated')
 });
 
 export const createSpaceSchema = Joi.object({
-  name: Joi.string().trim().min(NAME.MIN_LENGTH).max(NAME.MAX_LENGTH).required()
+  name: Joi.string()
+    .trim()
+    .min(NAME.MIN_LENGTH)
+    .max(NAME.MAX_LENGTH)
+    .required()
     .messages({
       'string.empty': 'Enter a space name',
       'string.min': 'Enter a space name',
-      'any.required': 'Enter a space name',
+      'any.required': 'Enter a space name'
     }),
-  researchObjective: Joi.string().trim().max(OBJECTIVE_MAX_LENGTH).allow('').optional(),
+  researchObjective: Joi.string()
+    .trim()
+    .max(OBJECTIVE_MAX_LENGTH)
+    .allow('')
+    .optional()
 });

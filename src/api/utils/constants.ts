@@ -4,7 +4,7 @@ export const PASSWORD_MIN_LENGTH = 8;
 
 export const NAME = {
   MIN_LENGTH: 1,
-  MAX_LENGTH: 100,
+  MAX_LENGTH: 100
 } as const;
 
 export const OBJECTIVE_MAX_LENGTH = 500;

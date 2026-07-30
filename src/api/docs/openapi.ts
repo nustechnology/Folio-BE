@@ -3,28 +3,27 @@ export const openApiDocument = {
   info: {
     title: 'Folio API',
     version: '1.0.0',
-    description:
-      'API documentation for authentication and users.',
+    description: 'API documentation for authentication and users.'
   },
   servers: [
     {
       url: '/',
-      description: 'Current server',
-    },
+      description: 'Current server'
+    }
   ],
   tags: [
     {
       name: 'Authentication',
-      description: 'Account registration and authentication',
+      description: 'Account registration and authentication'
     },
     {
       name: 'Users',
-      description: 'Authenticated user operations',
+      description: 'Authenticated user operations'
     },
     {
       name: 'Spaces',
-      description: 'Research space management',
-    },
+      description: 'Research space management'
+    }
   ],
   paths: {
     '/api/v1/auth/sign-up': {
@@ -37,10 +36,10 @@ export const openApiDocument = {
           content: {
             'application/json': {
               schema: {
-                $ref: '#/components/schemas/SignUpRequest',
-              },
-            },
-          },
+                $ref: '#/components/schemas/SignUpRequest'
+              }
+            }
+          }
         },
         responses: {
           '200': {
@@ -48,36 +47,37 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/SignUpSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/SignUpSuccessResponse'
+                }
+              }
+            }
           },
           '400': {
-            description: 'Validation error (invalid email, short password, password mismatch)',
+            description:
+              'Validation error (invalid email, short password, password mismatch)',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '409': {
             description: 'Email already registered',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
     },
     '/api/v1/auth/login': {
       post: {
@@ -89,10 +89,10 @@ export const openApiDocument = {
           content: {
             'application/json': {
               schema: {
-                $ref: '#/components/schemas/LoginRequest',
-              },
-            },
-          },
+                $ref: '#/components/schemas/LoginRequest'
+              }
+            }
+          }
         },
         responses: {
           '200': {
@@ -100,36 +100,37 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/AuthSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/AuthSuccessResponse'
+                }
+              }
+            }
           },
           '400': {
             description: 'Validation error',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '401': {
-            description: 'Invalid email or password (code: INVALID_CREDENTIALS)',
+            description:
+              'Invalid email or password (code: INVALID_CREDENTIALS)',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
     },
     '/api/v1/auth/refresh': {
       post: {
@@ -141,10 +142,10 @@ export const openApiDocument = {
           content: {
             'application/json': {
               schema: {
-                $ref: '#/components/schemas/RefreshRequest',
-              },
-            },
-          },
+                $ref: '#/components/schemas/RefreshRequest'
+              }
+            }
+          }
         },
         responses: {
           '200': {
@@ -152,36 +153,37 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/AuthSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/AuthSuccessResponse'
+                }
+              }
+            }
           },
           '400': {
             description: 'Missing refresh token',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '401': {
-            description: 'Expired (code: TOKEN_EXPIRED) or invalid (code: TOKEN_INVALID) refresh token',
+            description:
+              'Expired (code: TOKEN_EXPIRED) or invalid (code: TOKEN_INVALID) refresh token',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
     },
     '/api/v1/auth/logout': {
       post: {
@@ -190,8 +192,8 @@ export const openApiDocument = {
         operationId: 'logout',
         security: [
           {
-            bearerAuth: [],
-          },
+            bearerAuth: []
+          }
         ],
         responses: {
           '200': {
@@ -199,19 +201,19 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/LogoutSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/LogoutSuccessResponse'
+                }
+              }
+            }
           },
           '401': {
-            $ref: '#/components/responses/Unauthorized',
+            $ref: '#/components/responses/Unauthorized'
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
     },
     '/api/v1/spaces': {
       post: {
@@ -222,18 +224,18 @@ export const openApiDocument = {
         operationId: 'createSpace',
         security: [
           {
-            bearerAuth: [],
-          },
+            bearerAuth: []
+          }
         ],
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: {
-                $ref: '#/components/schemas/CreateSpaceRequest',
-              },
-            },
-          },
+                $ref: '#/components/schemas/CreateSpaceRequest'
+              }
+            }
+          }
         },
         responses: {
           '201': {
@@ -241,38 +243,40 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/CreateSpaceSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/CreateSpaceSuccessResponse'
+                }
+              }
+            }
           },
           '400': {
-            description: 'Validation error (empty name, name > 100 chars, objective > 500 chars)',
+            description:
+              'Validation error (empty name, name > 100 chars, objective > 500 chars)',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '401': {
-            $ref: '#/components/responses/Unauthorized',
+            $ref: '#/components/responses/Unauthorized'
           },
           '409': {
-            description: 'A space with this name already exists (code: SPACE_NAME_EXISTS)',
+            description:
+              'A space with this name already exists (code: SPACE_NAME_EXISTS)',
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
+            $ref: '#/components/responses/InternalError'
+          }
+        }
       },
       get: {
         tags: ['Spaces'],
@@ -282,18 +286,19 @@ export const openApiDocument = {
         operationId: 'listSpaces',
         security: [
           {
-            bearerAuth: [],
-          },
+            bearerAuth: []
+          }
         ],
         parameters: [
           {
             name: 'search',
             in: 'query',
             required: false,
-            description: 'Filter by space name or research objective (case-insensitive)',
+            description:
+              'Filter by space name or research objective (case-insensitive)',
             schema: {
-              type: 'string',
-            },
+              type: 'string'
+            }
           },
           {
             name: 'sort',
@@ -302,10 +307,15 @@ export const openApiDocument = {
             description: 'Sort order',
             schema: {
               type: 'string',
-              enum: ['recently-updated', 'recently-created', 'alphabetical-az', 'alphabetical-za'],
-              default: 'recently-updated',
-            },
-          },
+              enum: [
+                'recently-updated',
+                'recently-created',
+                'alphabetical-az',
+                'alphabetical-za'
+              ],
+              default: 'recently-updated'
+            }
+          }
         ],
         responses: {
           '200': {
@@ -313,10 +323,10 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ListSpacesSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ListSpacesSuccessResponse'
+                }
+              }
+            }
           },
           '400': {
             description: 'Validation error (invalid search or sort query)',
@@ -329,13 +339,13 @@ export const openApiDocument = {
             },
           },
           '401': {
-            $ref: '#/components/responses/Unauthorized',
+            $ref: '#/components/responses/Unauthorized'
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
     },
     '/api/v1/users/{id}': {
       get: {
@@ -346,8 +356,8 @@ export const openApiDocument = {
         operationId: 'getUser',
         security: [
           {
-            bearerAuth: [],
-          },
+            bearerAuth: []
+          }
         ],
         parameters: [
           {
@@ -357,9 +367,9 @@ export const openApiDocument = {
             description: 'User ID or `me`',
             schema: {
               type: 'string',
-              example: 'me',
-            },
-          },
+              example: 'me'
+            }
+          }
         ],
         responses: {
           '200': {
@@ -367,51 +377,51 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/UserSuccessResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/UserSuccessResponse'
+                }
+              }
+            }
           },
           '401': {
-            $ref: '#/components/responses/Unauthorized',
+            $ref: '#/components/responses/Unauthorized'
           },
           '500': {
-            $ref: '#/components/responses/InternalError',
-          },
-        },
-      },
-    },
-
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    }
   },
   components: {
     securitySchemes: {
       bearerAuth: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'JWT',
-      },
+        bearerFormat: 'JWT'
+      }
     },
     responses: {
       Unauthorized: {
-        description: 'Missing (code: TOKEN_MISSING), expired (code: TOKEN_EXPIRED), or invalid (code: TOKEN_INVALID) bearer token',
+        description:
+          'Missing (code: TOKEN_MISSING), expired (code: TOKEN_EXPIRED), or invalid (code: TOKEN_INVALID) bearer token',
         content: {
           'application/json': {
             schema: {
-              $ref: '#/components/schemas/ErrorResponse',
-            },
-          },
-        },
+              $ref: '#/components/schemas/ErrorResponse'
+            }
+          }
+        }
       },
       InternalError: {
         description: 'Validation, database, or application error',
         content: {
           'application/json': {
             schema: {
-              $ref: '#/components/schemas/ErrorResponse',
-            },
-          },
-        },
-      },
+              $ref: '#/components/schemas/ErrorResponse'
+            }
+          }
+        }
+      }
     },
     schemas: {
       SignUpRequest: {
@@ -423,25 +433,25 @@ export const openApiDocument = {
             type: 'string',
             minLength: 1,
             maxLength: 100,
-            example: 'alice',
+            example: 'alice'
           },
           email: {
             type: 'string',
             format: 'email',
-            example: 'alice@example.com',
+            example: 'alice@example.com'
           },
           password: {
             type: 'string',
-            minLength: 8,
-            description: 'Password (minimum 8 characters)',
-            example: 'password123',
+            minLength: 4,
+            description: 'Password (minimum 4 characters)',
+            example: 'password123'
           },
           confirmPassword: {
             type: 'string',
             description: 'Must match the password field',
-            example: 'password123',
-          },
-        },
+            example: 'password123'
+          }
+        }
       },
       LoginRequest: {
         type: 'object',
@@ -451,14 +461,14 @@ export const openApiDocument = {
           email: {
             type: 'string',
             format: 'email',
-            example: 'alice@example.com',
+            example: 'alice@example.com'
           },
           password: {
             type: 'string',
             minLength: 4,
-            example: 'password123',
-          },
-        },
+            example: 'password123'
+          }
+        }
       },
       RefreshRequest: {
         type: 'object',
@@ -467,10 +477,11 @@ export const openApiDocument = {
         properties: {
           refreshToken: {
             type: 'string',
-            description: 'The refresh token received from a previous login or refresh',
-            example: 'eyJhbGciOiJIUzI1NiIs...',
-          },
-        },
+            description:
+              'The refresh token received from a previous login or refresh',
+            example: 'eyJhbGciOiJIUzI1NiIs...'
+          }
+        }
       },
       User: {
         type: 'object',
@@ -479,26 +490,26 @@ export const openApiDocument = {
           id: {
             type: 'string',
             format: 'uuid',
-            example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+            example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
           },
           email: {
             type: 'string',
             format: 'email',
-            example: 'alice@example.com',
+            example: 'alice@example.com'
           },
           name: {
             type: 'string',
-            example: 'alice',
+            example: 'alice'
           },
           createdAt: {
             type: 'string',
-            format: 'date-time',
+            format: 'date-time'
           },
           lastActiveAt: {
             type: 'string',
-            format: 'date-time',
-          },
-        },
+            format: 'date-time'
+          }
+        }
       },
 
       SignUpSuccessResponse: {
@@ -507,26 +518,26 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['success'],
+            enum: ['success']
           },
           data: {
             type: 'object',
             required: ['user', 'accessToken', 'refreshToken'],
             properties: {
               user: {
-                $ref: '#/components/schemas/User',
+                $ref: '#/components/schemas/User'
               },
               accessToken: {
                 type: 'string',
-                description: 'JWT access token (15 minute expiry)',
+                description: 'JWT access token (15 minute expiry)'
               },
               refreshToken: {
                 type: 'string',
-                description: 'JWT refresh token (30 day expiry)',
-              },
-            },
-          },
-        },
+                description: 'JWT refresh token (30 day expiry)'
+              }
+            }
+          }
+        }
       },
       AuthSuccessResponse: {
         type: 'object',
@@ -534,7 +545,7 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['success'],
+            enum: ['success']
           },
           data: {
             type: 'object',
@@ -542,15 +553,15 @@ export const openApiDocument = {
             properties: {
               accessToken: {
                 type: 'string',
-                description: 'JWT access token (15 minute expiry)',
+                description: 'JWT access token (15 minute expiry)'
               },
               refreshToken: {
                 type: 'string',
-                description: 'JWT refresh token (30 day expiry)',
-              },
-            },
-          },
-        },
+                description: 'JWT refresh token (30 day expiry)'
+              }
+            }
+          }
+        }
       },
       LogoutSuccessResponse: {
         type: 'object',
@@ -558,7 +569,7 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['success'],
+            enum: ['success']
           },
           data: {
             type: 'object',
@@ -566,52 +577,61 @@ export const openApiDocument = {
             properties: {
               success: {
                 type: 'boolean',
-                enum: [true],
-              },
-            },
-          },
-        },
+                enum: [true]
+              }
+            }
+          }
+        }
       },
       Space: {
         type: 'object',
-        required: ['id', 'name', 'researchObjective', 'isArchived', 'createdAt', 'updatedAt', 'sourceCount', 'noteCount'],
+        required: [
+          'id',
+          'name',
+          'researchObjective',
+          'isArchived',
+          'createdAt',
+          'updatedAt',
+          'sourceCount',
+          'noteCount'
+        ],
         properties: {
           id: {
             type: 'string',
             format: 'uuid',
-            example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+            example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901'
           },
           name: {
             type: 'string',
-            example: 'AI Ethics Research',
+            example: 'AI Ethics Research'
           },
           researchObjective: {
             type: 'string',
-            example: 'Explore ethical frameworks for AI decision-making.',
+            example: 'Explore ethical frameworks for AI decision-making.'
           },
           isArchived: {
             type: 'boolean',
-            example: false,
+            example: false
           },
           createdAt: {
             type: 'string',
-            format: 'date-time',
+            format: 'date-time'
           },
           updatedAt: {
             type: 'string',
-            format: 'date-time',
+            format: 'date-time'
           },
           sourceCount: {
             type: 'integer',
             description: 'Number of sources in this space',
-            example: 3,
+            example: 3
           },
           noteCount: {
             type: 'integer',
             description: 'Number of notes in this space',
-            example: 12,
-          },
-        },
+            example: 12
+          }
+        }
       },
       CreateSpaceRequest: {
         type: 'object',
@@ -623,15 +643,15 @@ export const openApiDocument = {
             minLength: 1,
             maxLength: 100,
             description: 'Space name (required, 1-100 characters, trimmed)',
-            example: 'AI Ethics Research',
+            example: 'AI Ethics Research'
           },
           researchObjective: {
             type: 'string',
             maxLength: 500,
             description: 'Research objective (optional, max 500 characters)',
-            example: 'Explore ethical frameworks for AI decision-making.',
-          },
-        },
+            example: 'Explore ethical frameworks for AI decision-making.'
+          }
+        }
       },
       CreateSpaceSuccessResponse: {
         type: 'object',
@@ -639,18 +659,18 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['success'],
+            enum: ['success']
           },
           data: {
             type: 'object',
             required: ['space'],
             properties: {
               space: {
-                $ref: '#/components/schemas/Space',
-              },
-            },
-          },
-        },
+                $ref: '#/components/schemas/Space'
+              }
+            }
+          }
+        }
       },
       ListSpacesSuccessResponse: {
         type: 'object',
@@ -658,7 +678,7 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['success'],
+            enum: ['success']
           },
           data: {
             type: 'object',
@@ -667,12 +687,12 @@ export const openApiDocument = {
               spaces: {
                 type: 'array',
                 items: {
-                  $ref: '#/components/schemas/Space',
-                },
-              },
-            },
-          },
-        },
+                  $ref: '#/components/schemas/Space'
+                }
+              }
+            }
+          }
+        }
       },
       UserSuccessResponse: {
         type: 'object',
@@ -680,18 +700,18 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['success'],
+            enum: ['success']
           },
           data: {
             type: 'object',
             required: ['user'],
             properties: {
               user: {
-                $ref: '#/components/schemas/User',
-              },
-            },
-          },
-        },
+                $ref: '#/components/schemas/User'
+              }
+            }
+          }
+        }
       },
 
       ErrorResponse: {
@@ -700,10 +720,10 @@ export const openApiDocument = {
         properties: {
           status: {
             type: 'string',
-            enum: ['error'],
+            enum: ['error']
           },
           message: {
-            type: 'string',
+            type: 'string'
           },
           code: {
             type: 'string',
@@ -714,12 +734,12 @@ export const openApiDocument = {
               'TOKEN_REVOKED',
               'INVALID_CREDENTIALS',
               'EMAIL_EXISTS',
-              'INTERNAL_ERROR',
+              'INTERNAL_ERROR'
             ],
-            nullable: true,
-          },
-        },
-      },
-    },
-  },
+            nullable: true
+          }
+        }
+      }
+    }
+  }
 } as const;

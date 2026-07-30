@@ -20,5 +20,5 @@ const updateProfile = async (req: Request, res: Response) => {
 
 export default {
   getOne,
-  updateProfile,
+  updateProfile
 };
