@@ -16,8 +16,8 @@ import {
   type RefreshTokenPayload,
 } from '~/api/utils/token.util';
 
-const signUp = async (payload: { email: string; password: string }) => {
-  const { email, password } = payload;
+const signUp = async (payload: { name: string; email: string; password: string }) => {
+  const { name, email, password } = payload;
 
   let existingUser;
   try {
@@ -28,8 +28,6 @@ const signUp = async (payload: { email: string; password: string }) => {
   if (existingUser) {
     throw new AppError('An account with this email already exists', StatusCodes.CONFLICT, ErrorCode.EMAIL_EXISTS);
   }
-
-  const name = email.split('@')[0];
 
   const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
   const hashPassword = await bcrypt.hash(password, salt);

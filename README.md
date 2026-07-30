@@ -178,7 +178,7 @@ Content-Type: application/json
 }
 ```
 
-The current validator requires an alphanumeric name and password. Both must be between 3 and 30 characters.
+The current validator requires a name (1-100 characters), a valid email, and a password (minimum 8 characters).
 
 ### Log in
 

@@ -289,8 +289,14 @@ export const openApiDocument = {
       SignUpRequest: {
         type: 'object',
         additionalProperties: false,
-        required: ['email', 'password', 'confirmPassword'],
+        required: ['name', 'email', 'password', 'confirmPassword'],
         properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 100,
+            example: 'alice',
+          },
           email: {
             type: 'string',
             format: 'email',
@@ -298,8 +304,8 @@ export const openApiDocument = {
           },
           password: {
             type: 'string',
-            minLength: 4,
-            description: 'Password (minimum 4 characters)',
+            minLength: 8,
+            description: 'Password (minimum 8 characters)',
             example: 'password123',
           },
           confirmPassword: {

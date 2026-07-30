@@ -4,8 +4,8 @@ import AuthService from '~/api/services/auth.service';
 import { successResponse } from '~/api/routes/response';
 
 const signUp = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  const result = await AuthService.signUp({ email, password });
+  const { name, email, password } = req.body;
+  const result = await AuthService.signUp({ name, email, password });
 
   return successResponse(res, result);
 };
