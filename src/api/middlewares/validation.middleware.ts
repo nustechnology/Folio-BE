@@ -37,3 +37,16 @@ export const validateParams = (schema: Joi.ObjectSchema): RequestHandler => {
     }
   };
 };
+
+export const validateQuery = (schema: Joi.ObjectSchema): RequestHandler => {
+  return async (req, _res, next) => {
+    try {
+      req.query = await schema.validateAsync(req.query, {
+        abortEarly: false,
+      });
+      next();
+    } catch (error: unknown) {
+      forwardValidationError(error, next);
+    }
+  };
+};
