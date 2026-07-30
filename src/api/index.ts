@@ -25,7 +25,7 @@ class Api implements ApiInterface {
       "/api-docs",
       ...swaggerUi.serve,
       swaggerUi.setup(openApiDocument, {
-        customSiteTitle: "Express Prisma API Docs",
+        customSiteTitle: "Folio API Docs",
       }),
     );
     app.use("/api/v1", routes);
