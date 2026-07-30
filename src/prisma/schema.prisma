@@ -33,6 +33,8 @@ model ResearchSpace {
   conversations Conversation[]
   notes         Note[]
   notebook      Notebook?
+
+  @@index([ownerId])
 }
 
 enum OriginType {
@@ -57,6 +59,9 @@ model Source {
   updatedAt         DateTime      @updatedAt
 
   citations Citation[]
+
+  @@index([researchSpaceId])
+  @@index([originalNoteId])
 }
 
 model Conversation {
@@ -70,6 +75,8 @@ model Conversation {
   updatedAt             DateTime @updatedAt
 
   notes Note[]
+
+  @@index([researchSpaceId])
 }
 
 model Note {
@@ -87,6 +94,9 @@ model Note {
 
   sourcesCreated     Source[]           @relation("SourceFromNote")
   citationReferences NoteCitation[]
+
+  @@index([researchSpaceId])
+  @@index([originConversationId])
 }
 
 model Notebook {
@@ -110,6 +120,8 @@ model Citation {
   createdAt           DateTime @default(now())
 
   noteReferences NoteCitation[]
+
+  @@index([sourceId])
 }
 
 model NoteCitation {
@@ -119,4 +131,5 @@ model NoteCitation {
   citation   Citation @relation(fields: [citationId], references: [id])
 
   @@id([noteId, citationId])
+  @@index([citationId])
 }
