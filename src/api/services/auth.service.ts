@@ -6,6 +6,7 @@ import UserRepository from '~/prisma/repositories/user.repository';
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
 import { BCRYPT_SALT_ROUNDS } from '~/api/utils/constants';
+import { exclude } from '~/api/utils/exclude';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -53,7 +54,7 @@ const signUp = async (payload: { email: string; password: string }) => {
     throw new AppError('Failed to create session. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
   }
 
-  return { user, accessToken, refreshToken: rawRefreshToken };
+  return { user: exclude(user, ['refreshToken', 'tokenVersion']), accessToken, refreshToken: rawRefreshToken };
 };
 
 const login = async (payload: { email: string; password: string }) => {
