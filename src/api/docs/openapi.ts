@@ -214,6 +214,66 @@ export const openApiDocument = {
       },
     },
     '/api/v1/spaces': {
+      post: {
+        tags: ['Spaces'],
+        summary: 'Create a research space',
+        description:
+          'Creates a new research space for the authenticated user. Returns the created space with source and note counts initialized to 0.',
+        operationId: 'createSpace',
+        security: [
+          {
+            bearerAuth: [],
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/CreateSpaceRequest',
+              },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'Space created successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/CreateSpaceSuccessResponse',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Validation error (empty name, name > 100 chars, objective > 500 chars)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized',
+          },
+          '409': {
+            description: 'A space with this name already exists (code: SPACE_NAME_EXISTS)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError',
+          },
+        },
+      },
       get: {
         tags: ['Spaces'],
         summary: 'List research spaces',
@@ -540,6 +600,45 @@ export const openApiDocument = {
             type: 'integer',
             description: 'Number of notes in this space',
             example: 12,
+          },
+        },
+      },
+      CreateSpaceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name'],
+        properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 100,
+            description: 'Space name (required, 1-100 characters, trimmed)',
+            example: 'AI Ethics Research',
+          },
+          researchObjective: {
+            type: 'string',
+            maxLength: 500,
+            description: 'Research objective (optional, max 500 characters)',
+            example: 'Explore ethical frameworks for AI decision-making.',
+          },
+        },
+      },
+      CreateSpaceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success'],
+          },
+          data: {
+            type: 'object',
+            required: ['space'],
+            properties: {
+              space: {
+                $ref: '#/components/schemas/Space',
+              },
+            },
           },
         },
       },
