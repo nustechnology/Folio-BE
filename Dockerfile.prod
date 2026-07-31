@@ -9,8 +9,7 @@ RUN yarn install
 
 COPY . .
 
-RUN npx prisma generate
-RUN yarn build
+RUN DATABASE_URL=postgresql://build:build@localhost:5432/build yarn build
 
 EXPOSE 4000
 
