@@ -23,6 +23,10 @@ export const openApiDocument = {
     {
       name: 'Spaces',
       description: 'Research space management'
+    },
+    {
+      name: 'Sources',
+      description: 'Source management within a research space'
     }
   ],
   paths: {
@@ -333,13 +337,383 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '401': {
             $ref: '#/components/responses/Unauthorized'
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources': {
+      post: {
+        tags: ['Sources'],
+        summary: 'Create a source in a space',
+        description:
+          'Creates a File, Web, or Manual source. File sources are sent as multipart/form-data with the file in the `file` field; Web and Manual sources are sent as application/json. The target space is identified by the spaceId field.',
+        operationId: 'createSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                $ref: '#/components/schemas/CreateFileSourceRequest'
+              },
+              examples: {
+                FileSource: {
+                  summary: 'File source',
+                  value: {
+                    spaceId: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+                    sourceType: 'File',
+                    title: 'AI Ethics Research Paper',
+                    author: 'Alice Johnson',
+                    file: '(select a file to upload)'
+                  }
+                }
+              }
+            },
+            'application/json': {
+              schema: {
+                oneOf: [
+                  {
+                    $ref: '#/components/schemas/CreateWebSourceRequest'
+                  },
+                  {
+                    $ref: '#/components/schemas/CreateManualSourceRequest'
+                  }
+                ]
+              },
+              examples: {
+                WebSource: {
+                  summary: 'Web source',
+                  value: {
+                    spaceId: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+                    sourceType: 'Web',
+                    sourceUrl: 'https://example.com/article',
+                    title: 'Example Article',
+                    author: ''
+                  }
+                },
+                ManualSource: {
+                  summary: 'Manual text source',
+                  value: {
+                    spaceId: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+                    sourceType: 'Manual',
+                    title: 'My Research Notes',
+                    author: 'Alice Johnson',
+                    content:
+                      'This is a manual source with enough content to satisfy validation.'
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          '201': {
+            description: 'Source created successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error (invalid URL, unsupported file, content length, or source type)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Space not found (code: SPACE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
+      get: {
+        tags: ['Sources'],
+        summary: 'List sources in a space',
+        description:
+          'Returns all sources in a space, with optional filtering by source type and processing state.',
+        operationId: 'listSources',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'spaceId',
+            in: 'query',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'sourceType',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: ['File', 'Web', 'Manual']
+            }
+          },
+          {
+            name: 'processingState',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: [
+                'added',
+                'extracting_text',
+                'indexing_evidence',
+                'ready',
+                'failed'
+              ]
+            }
+          },
+          {
+            name: 'search',
+            in: 'query',
+            required: false,
+            description: 'Filter by source title or author (case-insensitive)',
+            schema: {
+              type: 'string'
+            }
+          },
+          {
+            name: 'sort',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'string',
+              enum: ['recently-added', 'alphabetical-az', 'alphabetical-za'],
+              default: 'recently-added'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'List of sources',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ListSourcesSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Space not found (code: SPACE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Get a single source',
+        operationId: 'getSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Source found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
+      delete: {
+        tags: ['Sources'],
+        summary: 'Delete a source',
+        description:
+          'Removes the source record and deletes the associated MinIO object for file sources.',
+        operationId: 'deleteSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Source deleted',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/DeleteSourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/retry': {
+      post: {
+        tags: ['Sources'],
+        summary: 'Retry processing of a failed source',
+        description:
+          'Resets the processing state of a failed source back to added so the ingestion pipeline can re-run.',
+        operationId: 'retrySource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Source reset for retry',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Source is not in failed state (code: SOURCE_NOT_FAILED)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '500': {
             $ref: '#/components/responses/InternalError'
@@ -708,6 +1082,255 @@ export const openApiDocument = {
             properties: {
               user: {
                 $ref: '#/components/schemas/User'
+              }
+            }
+          }
+        }
+      },
+
+      Source: {
+        type: 'object',
+        required: [
+          'id',
+          'researchSpaceId',
+          'sourceType',
+          'title',
+          'content',
+          'processingState',
+          'createdAt',
+          'updatedAt'
+        ],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid',
+            example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+          },
+          researchSpaceId: {
+            type: 'string',
+            format: 'uuid',
+            example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901'
+          },
+          sourceType: {
+            type: 'string',
+            enum: ['File', 'Web', 'Manual']
+          },
+          title: {
+            type: 'string',
+            example: 'AI Ethics Research Paper'
+          },
+          author: {
+            type: 'string',
+            nullable: true,
+            example: 'Alice Johnson'
+          },
+          sourceUrl: {
+            type: 'string',
+            nullable: true,
+            description: 'MinIO object key (File) or article URL (Web)'
+          },
+          fileName: {
+            type: 'string',
+            nullable: true,
+            description: 'Original uploaded filename (File sources)'
+          },
+          fileSize: {
+            type: 'integer',
+            format: 'int64',
+            nullable: true,
+            description: 'File size in bytes (File sources)'
+          },
+          fileType: {
+            type: 'string',
+            nullable: true,
+            description: 'MIME type (File sources)'
+          },
+          pageCount: {
+            type: 'integer',
+            nullable: true,
+            description: 'Extracted during ingestion'
+          },
+          characterCount: {
+            type: 'integer',
+            nullable: true,
+            description: 'Extracted during ingestion'
+          },
+          content: {
+            type: 'string',
+            description: 'Extracted/manual text content'
+          },
+          processingState: {
+            type: 'string',
+            enum: [
+              'added',
+              'extracting_text',
+              'indexing_evidence',
+              'ready',
+              'failed'
+            ],
+            description:
+              'Ingestion pipeline stage. `added` = source metadata registered, `extracting_text` = file parsing/scraping in progress, `indexing_evidence` = chunking and vector indexing, `ready` = fully processed and usable, `failed` = processing failed (retryable).'
+          },
+          processingError: {
+            type: 'string',
+            nullable: true,
+            description: 'Error message when processingState is failed'
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      CreateFileSourceRequest: {
+        type: 'object',
+        description:
+          'Multipart form data for creating a file source. Send the file in the `file` field together with `spaceId`, `sourceType`, and optional `title`/`author` form fields. Supported extensions: .pdf, .docx, .txt, .md, .pptx, .xlsx, .csv, .epub. Maximum file size: 50 MB.',
+        properties: {
+          file: {
+            type: 'string',
+            format: 'binary',
+            description: 'The file to upload'
+          },
+          spaceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceType: {
+            type: 'string',
+            enum: ['File']
+          },
+          title: {
+            type: 'string',
+            maxLength: 255
+          },
+          author: {
+            type: 'string',
+            maxLength: 100
+          }
+        },
+        required: ['file', 'spaceId', 'sourceType']
+      },
+      CreateWebSourceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['spaceId', 'sourceType', 'sourceUrl'],
+        properties: {
+          spaceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceType: {
+            type: 'string',
+            enum: ['Web']
+          },
+          sourceUrl: {
+            type: 'string',
+            format: 'uri',
+            description: 'Article URL (http:// or https://)'
+          },
+          title: {
+            type: 'string',
+            maxLength: 255,
+            description:
+              'Optional; defaults to the page <title> after processing'
+          },
+          author: {
+            type: 'string',
+            maxLength: 100,
+            description: 'Optional; defaults to the domain name'
+          }
+        }
+      },
+      CreateManualSourceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['spaceId', 'sourceType', 'content'],
+        properties: {
+          spaceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceType: {
+            type: 'string',
+            enum: ['Manual']
+          },
+          title: {
+            type: 'string',
+            maxLength: 255
+          },
+          author: {
+            type: 'string',
+            maxLength: 100
+          },
+          content: {
+            type: 'string',
+            minLength: 10,
+            maxLength: 50000,
+            description: 'Raw text content (10-50,000 characters)'
+          }
+        }
+      },
+      SourceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['source'],
+            properties: {
+              source: {
+                $ref: '#/components/schemas/Source'
+              }
+            }
+          }
+        }
+      },
+      ListSourcesSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['sources'],
+            properties: {
+              sources: {
+                type: 'array',
+                items: {
+                  $ref: '#/components/schemas/Source'
+                }
+              }
+            }
+          }
+        }
+      },
+      DeleteSourceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['success'],
+            properties: {
+              success: {
+                type: 'boolean',
+                enum: [true]
               }
             }
           }

@@ -1,9 +1,16 @@
 import api from '~/api/index';
 import { Application } from 'express';
+
 import { env } from '~/config/enviroment';
 import logger from '~/config/logger';
+import { ensureBucket } from '~/api/utils/minio.util';
+
+(BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function () {
+  return Number(this as bigint);
+};
 
 async function startApiServer() {
+  await ensureBucket();
   const app: Application = await api.server();
   app.listen(env.SERVER_PORT, () => {
     logger.info('API server started', {
