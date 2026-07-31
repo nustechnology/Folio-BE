@@ -41,6 +41,7 @@ The application uses these variables:
 | `LOG_LEVEL` | Minimum Winston log level | `debug` locally, `info` in production |
 | `DATABASE_URL` | Direct PostgreSQL connection used by Prisma Client and Prisma CLI | `postgresql://nus:nus_local_password@localhost:5432/nus_express_template` |
 | `JWT_TOKEN_SECRET` | Secret used to sign and verify access tokens | Use a long random value |
+| `SEED_USER_PASSWORD` | Password used for the seeded alice user (required by `yarn db:seed`) | `password123` |
 
 The `POSTGRES_*`, `POSTGRES_PORT`, and `ADMINER_PORT` variables in `.env.example` are optional overrides for Docker Compose.
 

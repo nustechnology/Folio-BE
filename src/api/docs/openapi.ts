@@ -218,7 +218,7 @@ export const openApiDocument = {
         tags: ['Spaces'],
         summary: 'List research spaces',
         description:
-          'Returns all spaces owned by the authenticated user, with optional search and sorting.',
+          'Returns all non-archived spaces owned by the authenticated user, with optional search and sorting.',
         operationId: 'listSpaces',
         security: [
           {
@@ -254,6 +254,16 @@ export const openApiDocument = {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/ListSpacesSuccessResponse',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Validation error (invalid search or sort query)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
                 },
               },
             },

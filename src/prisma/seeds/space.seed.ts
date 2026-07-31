@@ -1,18 +1,27 @@
 import bcrypt from 'bcryptjs';
+import { env } from '~/config/enviroment';
 import prisma from '~/prisma/prisma.client';
 
 async function main() {
+  if (env.NODE_ENV === 'production') {
+    throw new Error('Seed script refused to run against production environment.');
+  }
+
+  if (!env.SEED_USER_PASSWORD) {
+    throw new Error('Missing required environment variable: SEED_USER_PASSWORD');
+  }
+
   const email = 'alice@example.com';
   let user = await prisma.user.findUnique({ where: { email } });
 
   if (!user) {
-    const hash = await bcrypt.hash('password123', 10);
+    const hash = await bcrypt.hash(env.SEED_USER_PASSWORD, 10);
     user = await prisma.user.create({
       data: { name: 'alice', email, password: hash },
     });
-    console.log(`Created user: ${user.email} (${user.id})`);
+    console.log('Created user');
   } else {
-    console.log(`Using existing user: ${user.email} (${user.id})`);
+    console.log('Using existing user');
   }
 
   const spaces = [
@@ -32,21 +41,34 @@ async function main() {
     const createdAt = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
     const updatedAt = new Date(now - Math.max(0, daysAgo - 1) * 24 * 60 * 60 * 1000);
 
+    const spaceId = `seed-space-${i}`;
+    const spaceData = {
+      ownerId: user.id,
+      name: s.name,
+      researchObjective: s.researchObjective,
+      createdAt,
+      updatedAt,
+      lastOpenedAt: updatedAt,
+    };
+
+    const existing = await prisma.researchSpace.findUnique({
+      where: { id: spaceId },
+    });
+
     await prisma.researchSpace.upsert({
-      where: { id: `seed-space-${i}` },
-      update: {},
+      where: { id: spaceId },
+      update: spaceData,
       create: {
-        id: `seed-space-${i}`,
-        ownerId: user.id,
-        name: s.name,
-        researchObjective: s.researchObjective,
-        createdAt,
-        updatedAt,
-        lastOpenedAt: updatedAt,
+        id: spaceId,
+        ...spaceData,
       },
     });
 
-    console.log(`  Created space: "${s.name}"`);
+    if (existing) {
+      console.log(`  Updated space: "${s.name}"`);
+    } else {
+      console.log(`  Created space: "${s.name}"`);
+    }
   }
 
   console.log(`\nSeeded ${spaces.length} spaces.`);
@@ -55,6 +77,10 @@ async function main() {
 main()
   .catch((e) => {
     console.error(e);
-    process.exit(1);
+    process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  .finally(() => prisma.$disconnect())
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  });

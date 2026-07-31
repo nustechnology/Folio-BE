@@ -12,6 +12,7 @@ interface EnvInterface {
   ACCESS_TOKEN_EXPIRATION: string;
   REFRESH_TOKEN_EXPIRATION: string;
   CORS_ORIGIN: string;
+  SEED_USER_PASSWORD: string;
 }
 
 export const env: EnvInterface = {
@@ -26,6 +27,7 @@ export const env: EnvInterface = {
   ACCESS_TOKEN_EXPIRATION: process.env.ACCESS_TOKEN_EXPIRATION || '15m',
   REFRESH_TOKEN_EXPIRATION: process.env.REFRESH_TOKEN_EXPIRATION || '30d',
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  SEED_USER_PASSWORD: process.env.SEED_USER_PASSWORD || '',
 };
 
 const missing = [
