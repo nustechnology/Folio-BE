@@ -1,7 +1,7 @@
-import api from './api/index.js';
+import api from '~/api/index';
 import { Application } from 'express';
-import { env } from './config/enviroment.js';
-import logger from './config/logger.js';
+import { env } from '~/config/enviroment';
+import logger from '~/config/logger';
 
 async function startApiServer() {
   const app: Application = await api.server();

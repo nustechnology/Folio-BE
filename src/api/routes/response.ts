@@ -1,5 +1,6 @@
+import { StatusCodes } from 'http-status-codes';
 import { Response } from 'express';
 
 export const successResponse = (res: Response, data: any) => {
-  return res.status(200).json({ status: 'success', data })
+  return res.status(StatusCodes.OK).json({ status: 'success', data })
 }

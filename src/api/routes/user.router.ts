@@ -1,16 +1,16 @@
 import { Router } from 'express';
 
-import UserController from '../controllers/user.controller.js';
-import { auth } from '../middlewares/auth.middleware.js';
-import { asyncHandler } from '../middlewares/async-handler.middleware.js';
+import UserController from '~/api/controllers/user.controller';
+import { auth } from '~/api/middlewares/auth.middleware';
+import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import {
   validateBody,
   validateParams,
-} from '../middlewares/validation.middleware.js';
+} from '~/api/middlewares/validation.middleware';
 import {
   updateProfileSchema,
   userIdParamsSchema,
-} from './validators/user.validator.js';
+} from '~/api/routes/validators/user.validator';
 
 const router = Router();
 

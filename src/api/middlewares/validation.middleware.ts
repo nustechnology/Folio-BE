@@ -1,11 +1,13 @@
 import { NextFunction, RequestHandler } from 'express';
 import Joi from 'joi';
 
-import { AppError } from '../errors/app.error.js';
+import { StatusCodes } from 'http-status-codes';
+
+import { AppError } from '~/api/errors/app.error';
 
 const forwardValidationError = (error: unknown, next: NextFunction) => {
   if (Joi.isError(error)) {
-    next(new AppError(error.message, 400));
+    next(new AppError(error.message, StatusCodes.BAD_REQUEST));
     return;
   }
 

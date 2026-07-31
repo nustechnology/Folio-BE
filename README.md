@@ -178,7 +178,7 @@ Content-Type: application/json
 }
 ```
 
-The current validator requires an alphanumeric name and password. Both must be between 3 and 30 characters.
+The current validator requires a name (1-100 characters), a valid email, and a password (minimum 8 characters).
 
 ### Log in
 
@@ -218,10 +218,6 @@ Authorization: Bearer <token>
 | `POST` | `/api/v1/auth/login` | No | Return a one-day JWT |
 | `GET` | `/api/v1/users/:id` | Bearer token | Get a user by numeric ID or `me` |
 | `PUT` | `/api/v1/users/profile` | Bearer token | Update the authenticated user's name, email, or address |
-| `GET` | `/api/v1/posts` | Bearer token | List posts owned by the authenticated user |
-| `POST` | `/api/v1/posts` | Bearer token | Create a post owned by the authenticated user |
-| `GET` | `/api/v1/comments` | Bearer token | List comments owned by the authenticated user |
-| `POST` | `/api/v1/comments` | Bearer token | Create a comment on a post |
 | `GET` | `/health` | No | Return service health and the current timestamp |
 
 See `/api-docs` for request schemas and interactive examples.

@@ -8,12 +8,15 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  authRef      String   @unique
-  createdAt    DateTime @default(now())
-  lastActiveAt DateTime @default(now())
+  id                    String    @id @default(uuid())
+  name                  String
+  email                 String    @unique
+  password              String
+  refreshToken          String?   @unique
+  tokenVersion          Int       @default(0)
+
+  createdAt             DateTime  @default(now())
+  lastActiveAt          DateTime  @default(now())
 
   researchSpaces ResearchSpace[]
 }

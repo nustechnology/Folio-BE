@@ -1,48 +1,152 @@
-import { Prisma, User } from '../../generated/prisma/client.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { StatusCodes } from 'http-status-codes';
 
-import UserRepository from '../../prisma/repositories/user.repository.js';
-import { env } from '../../config/enviroment.js';
+import UserRepository from '~/prisma/repositories/user.repository';
+import { AppError } from '~/api/errors/app.error';
+import { ErrorCode } from '~/api/errors/error-codes';
+import { BCRYPT_SALT_ROUNDS } from '~/api/utils/constants';
+import { exclude } from '~/api/utils/exclude';
+import { Prisma } from '~/generated/prisma/client';
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  hashToken,
+  verifyRefreshToken,
+  type RefreshTokenPayload,
+} from '~/api/utils/token.util';
 
-const SALT_ROUND = 10;
-const TOKEN_EXPIRATION = 60 * 60 * 24;
-
-const signUp = async (payload: Prisma.UserCreateInput) => {
+const signUp = async (payload: { name: string; email: string; password: string }) => {
   const { name, email, password } = payload;
 
-  const salt = await bcrypt.genSalt(SALT_ROUND);
+  let existingUser;
+  try {
+    existingUser = await UserRepository.findOneByEmail(email);
+  } catch {
+    throw new AppError('Something went wrong. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
+  if (existingUser) {
+    throw new AppError('An account with this email already exists', StatusCodes.CONFLICT, ErrorCode.EMAIL_EXISTS);
+  }
+
+  const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
   const hashPassword = await bcrypt.hash(password, salt);
 
-  return UserRepository.create({
-    name,
-    email,
-    password: hashPassword,
-  });
+  let user;
+  try {
+    user = await UserRepository.create({
+      name,
+      email,
+      password: hashPassword,
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new AppError('An account with this email already exists', StatusCodes.CONFLICT, ErrorCode.EMAIL_EXISTS);
+    }
+    throw error;
+  }
+
+  const accessToken = generateAccessToken(user.id, user.email, user.tokenVersion);
+  const rawRefreshToken = generateRefreshToken(user.id, user.email, user.tokenVersion);
+  const hashedRefreshToken = await hashToken(rawRefreshToken);
+
+  try {
+    await UserRepository.updateRefreshToken(user.id, hashedRefreshToken);
+  } catch {
+    throw new AppError('Failed to create session. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
+
+  return { user: exclude(user, ['refreshToken', 'tokenVersion']), accessToken, refreshToken: rawRefreshToken };
 };
 
 const login = async (payload: { email: string; password: string }) => {
   const { email, password } = payload;
-  const user = await UserRepository.findOneByEmail(email, {
-    excludeSensitiveFields: false,
-  }) as User;
 
+  let user;
+  try {
+    user = await UserRepository.findOneByEmail(email);
+  } catch {
+    throw new AppError('Something went wrong. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
   if (!user) {
-    throw Error('Email or Password is not correct');
+    throw new AppError('Invalid email or password. Please try again.', StatusCodes.UNAUTHORIZED, ErrorCode.INVALID_CREDENTIALS);
   }
 
   const checkPassword = await bcrypt.compare(password, user.password);
-
   if (!checkPassword) {
-    throw Error('Email or Password is not correct');
+    throw new AppError('Invalid email or password. Please try again.', StatusCodes.UNAUTHORIZED, ErrorCode.INVALID_CREDENTIALS);
   }
 
-  return jwt.sign({ id: user.id }, env.JWT_TOKEN_SECRET, {
-    expiresIn: TOKEN_EXPIRATION,
-  });
+  const accessToken = generateAccessToken(user.id, user.email, user.tokenVersion);
+  const rawRefreshToken = generateRefreshToken(user.id, user.email, user.tokenVersion);
+  const hashedRefreshToken = await hashToken(rawRefreshToken);
+
+  try {
+    await UserRepository.updateRefreshToken(user.id, hashedRefreshToken);
+  } catch {
+    throw new AppError('Failed to create session. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
+
+  return { accessToken, refreshToken: rawRefreshToken };
+};
+
+const refresh = async (payload: { refreshToken: string }) => {
+  const { refreshToken: rawRefreshToken } = payload;
+
+  let decoded: RefreshTokenPayload;
+  try {
+    decoded = verifyRefreshToken(rawRefreshToken);
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new AppError('Refresh token has expired. Please log in again.', StatusCodes.UNAUTHORIZED, ErrorCode.TOKEN_EXPIRED);
+    }
+    throw new AppError('Refresh token is invalid or malformed', StatusCodes.UNAUTHORIZED, ErrorCode.TOKEN_INVALID);
+  }
+
+  let user;
+  try {
+    user = await UserRepository.findById(decoded.sub);
+  } catch {
+    throw new AppError('Something went wrong. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
+  if (!user || !user.refreshToken) {
+    throw new AppError('Refresh token is no longer valid. Please log in again.', StatusCodes.UNAUTHORIZED, ErrorCode.TOKEN_INVALID);
+  }
+
+  if (user.tokenVersion !== decoded.tokenVersion) {
+    throw new AppError('Refresh token has been revoked. Please log in again.', StatusCodes.UNAUTHORIZED, ErrorCode.TOKEN_REVOKED);
+  }
+
+  const isTokenValid = await bcrypt.compare(rawRefreshToken, user.refreshToken);
+  if (!isTokenValid) {
+    throw new AppError('Refresh token has been revoked. Please log in again.', StatusCodes.UNAUTHORIZED, ErrorCode.TOKEN_INVALID);
+  }
+
+  const newAccessToken = generateAccessToken(user.id, user.email, user.tokenVersion);
+  const newRawRefreshToken = generateRefreshToken(user.id, user.email, user.tokenVersion);
+  const newHashedRefreshToken = await hashToken(newRawRefreshToken);
+
+  try {
+    await UserRepository.updateRefreshToken(user.id, newHashedRefreshToken);
+  } catch {
+    throw new AppError('Failed to refresh session. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
+
+  return { accessToken: newAccessToken, refreshToken: newRawRefreshToken };
+};
+
+const logout = async (userId: string) => {
+  try {
+    await UserRepository.updateRefreshToken(userId, null);
+    await UserRepository.incrementTokenVersion(userId);
+  } catch {
+    throw new AppError('Failed to log out. Please try again.', StatusCodes.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR);
+  }
 };
 
 export default {
   signUp,
   login,
+  refresh,
+  logout,
 };

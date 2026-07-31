@@ -1,7 +1,7 @@
 import winston from 'winston';
 
-import { env } from './enviroment.js';
-import { requestContext } from './request-context.js';
+import { env } from '~/config/enviroment';
+import { requestContext } from '~/config/request-context';
 
 const addRequestContext = winston.format((info) => {
   const context = requestContext.getStore();
