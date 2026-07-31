@@ -29,7 +29,7 @@ export const validateParams = (schema: Joi.ObjectSchema): RequestHandler => {
   return async (req, _res, next) => {
     try {
       req.params = await schema.validateAsync(req.params, {
-        abortEarly: false,
+        abortEarly: false
       });
       next();
     } catch (error: unknown) {
@@ -42,7 +42,7 @@ export const validateQuery = (schema: Joi.ObjectSchema): RequestHandler => {
   return async (req, _res, next) => {
     try {
       req.query = await schema.validateAsync(req.query, {
-        abortEarly: false,
+        abortEarly: false
       });
       next();
     } catch (error: unknown) {

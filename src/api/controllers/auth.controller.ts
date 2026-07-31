@@ -32,5 +32,5 @@ export default {
   signUp,
   login,
   refresh,
-  logout,
+  logout
 };

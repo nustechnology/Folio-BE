@@ -17,7 +17,7 @@ async function main() {
   if (!user) {
     const hash = await bcrypt.hash(env.SEED_USER_PASSWORD, 10);
     user = await prisma.user.create({
-      data: { name: 'alice', email, password: hash },
+      data: { name: 'alice', email, password: hash }
     });
     console.log('Created user');
   } else {
@@ -25,12 +25,28 @@ async function main() {
   }
 
   const spaces = [
-    { name: 'AI Ethics Research', researchObjective: 'Explore ethical frameworks for AI decision-making in healthcare and autonomous vehicles.' },
-    { name: 'Climate Change Analysis', researchObjective: 'Analyze global temperature data and policy impacts on carbon emissions.' },
-    { name: 'Quantum Computing Basics', researchObjective: 'Understand qubit mechanics, superposition, and entanglement fundamentals.' },
+    {
+      name: 'AI Ethics Research',
+      researchObjective:
+        'Explore ethical frameworks for AI decision-making in healthcare and autonomous vehicles.'
+    },
+    {
+      name: 'Climate Change Analysis',
+      researchObjective:
+        'Analyze global temperature data and policy impacts on carbon emissions.'
+    },
+    {
+      name: 'Quantum Computing Basics',
+      researchObjective:
+        'Understand qubit mechanics, superposition, and entanglement fundamentals.'
+    },
     { name: 'Renaissance Art History', researchObjective: '' },
-    { name: 'Urban Planning & Smart Cities', researchObjective: 'Study IoT integration, traffic optimization, and sustainable infrastructure in modern cities.' },
-    { name: 'Personal Notes', researchObjective: '' },
+    {
+      name: 'Urban Planning & Smart Cities',
+      researchObjective:
+        'Study IoT integration, traffic optimization, and sustainable infrastructure in modern cities.'
+    },
+    { name: 'Personal Notes', researchObjective: '' }
   ];
 
   const now = Date.now();
@@ -39,7 +55,9 @@ async function main() {
     const s = spaces[i];
     const daysAgo = i * 7;
     const createdAt = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
-    const updatedAt = new Date(now - Math.max(0, daysAgo - 1) * 24 * 60 * 60 * 1000);
+    const updatedAt = new Date(
+      now - Math.max(0, daysAgo - 1) * 24 * 60 * 60 * 1000
+    );
 
     const spaceId = `seed-space-${i}`;
     const spaceData = {
