@@ -13,6 +13,13 @@ interface EnvInterface {
   REFRESH_TOKEN_EXPIRATION: string;
   CORS_ORIGIN: string;
   SEED_USER_PASSWORD: string;
+  MINIO_ENDPOINT: string;
+  MINIO_PORT: string;
+  MINIO_ROOT_USER: string;
+  MINIO_ROOT_PASSWORD: string;
+  MINIO_BUCKET_NAME: string;
+  MINIO_USE_SSL: string;
+  MULTER_TEMP_DIR: string;
 }
 
 const nodeEnv = process.env.NODE_ENV || '';
@@ -30,7 +37,14 @@ export const env: EnvInterface = {
   CORS_ORIGIN:
     process.env.CORS_ORIGIN ||
     (nodeEnv === 'production' ? '' : 'http://localhost:3000'),
-  SEED_USER_PASSWORD: process.env.SEED_USER_PASSWORD || ''
+  SEED_USER_PASSWORD: process.env.SEED_USER_PASSWORD || '',
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || 'localhost',
+  MINIO_PORT: process.env.MINIO_PORT || '9000',
+  MINIO_ROOT_USER: process.env.MINIO_ROOT_USER || 'minioadmin',
+  MINIO_ROOT_PASSWORD: process.env.MINIO_ROOT_PASSWORD || 'minioadmin',
+  MINIO_BUCKET_NAME: process.env.MINIO_BUCKET_NAME || 'folio-sources',
+  MINIO_USE_SSL: process.env.MINIO_USE_SSL || 'false',
+  MULTER_TEMP_DIR: process.env.MULTER_TEMP_DIR || ''
 };
 
 const missing = [

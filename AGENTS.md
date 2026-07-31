@@ -22,7 +22,7 @@ yarn dev                   # starts tsx watch on src/index.ts
 | `yarn db:generate` | `prisma generate` (output: `src/generated/prisma`) |
 | `yarn db:migrate` | `prisma migrate dev` (interactive, prompts for name) |
 | `yarn db:migrate-prod` | `prisma migrate deploy` (apply committed migrations only) |
-| `yarn db:seed` | `ts-node src/prisma/seeds/*.ts` |
+| `yarn db:seed` | `tsx src/prisma/seeds/space.seed.ts` (tsx resolves `~/` aliases) |
 
 ## Architecture
 
