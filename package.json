@@ -2,9 +2,9 @@
   "name": "nus-express-template",
   "version": "0.0.0",
   "scripts": {
-    "build": "yarn db:generate && tsc --build --clean && tsc && tsc-alias -f -fe .js",
+    "build": "yarn db:generate && tsc --build --clean && tsc && tsc-alias",
     "lint": "eslint src/**/*.ts",
-    "start": "yarn db:generate && yarn lint && yarn build && yarn dev",
+    "start": "node dist/index.js",
     "dev": "yarn db:generate && tsx watch src/index.ts",
     "db:generate": "prisma generate",
     "db:migrate": "npx prisma migrate dev",
