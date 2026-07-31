@@ -1,5 +1,9 @@
-import { Prisma } from '~/generated/prisma/client';
+import { StatusCodes } from 'http-status-codes';
+
+import { AppError } from '~/api/errors/app.error';
+import { ErrorCode } from '~/api/errors/error-codes';
 import { ListOptions } from '~/api/types/space';
+import { Prisma } from '~/generated/prisma/client';
 import prisma from '~/prisma/prisma.client';
 
 type ListFilters = {
@@ -61,19 +65,33 @@ const create = async (data: {
   name: string;
   researchObjective: string;
 }) => {
-  const record = await prisma.researchSpace.create({
-    data,
-    include: {
-      _count: {
-        select: {
-          sources: true,
-          notes: true
+  try {
+    const record = await prisma.researchSpace.create({
+      data,
+      include: {
+        _count: {
+          select: {
+            sources: true,
+            notes: true
+          }
         }
       }
+    });
+    const { _count, ...rest } = record;
+    return { ...rest, sourceCount: _count.sources, noteCount: _count.notes };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      throw new AppError(
+        'A space with this name already exists.',
+        StatusCodes.CONFLICT,
+        ErrorCode.SPACE_NAME_EXISTS
+      );
     }
-  });
-  const { _count, ...rest } = record;
-  return { ...rest, sourceCount: _count.sources, noteCount: _count.notes };
+    throw error;
+  }
 };
 
 export default {

@@ -15,24 +15,28 @@ interface EnvInterface {
   SEED_USER_PASSWORD: string;
 }
 
+const nodeEnv = process.env.NODE_ENV || '';
+
 export const env: EnvInterface = {
   SERVER_PORT: process.env.PORT || '',
-  NODE_ENV: process.env.NODE_ENV || '',
+  NODE_ENV: nodeEnv,
   LOG_LEVEL:
-    process.env.LOG_LEVEL ||
-    (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+    process.env.LOG_LEVEL || (nodeEnv === 'production' ? 'info' : 'debug'),
   DATABASE_URL: process.env.DATABASE_URL || '',
   JWT_TOKEN_SECRET: process.env.JWT_TOKEN_SECRET || '',
   REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || '',
   ACCESS_TOKEN_EXPIRATION: process.env.ACCESS_TOKEN_EXPIRATION || '15m',
   REFRESH_TOKEN_EXPIRATION: process.env.REFRESH_TOKEN_EXPIRATION || '30d',
-  CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  CORS_ORIGIN:
+    process.env.CORS_ORIGIN ||
+    (nodeEnv === 'production' ? '' : 'http://localhost:3000'),
   SEED_USER_PASSWORD: process.env.SEED_USER_PASSWORD || ''
 };
 
 const missing = [
   ['JWT_TOKEN_SECRET', env.JWT_TOKEN_SECRET],
-  ['REFRESH_TOKEN_SECRET', env.REFRESH_TOKEN_SECRET]
+  ['REFRESH_TOKEN_SECRET', env.REFRESH_TOKEN_SECRET],
+  ...(nodeEnv === 'production' ? [['CORS_ORIGIN', env.CORS_ORIGIN]] : [])
 ]
   .filter(([, v]) => !v || v.trim().length === 0)
   .map(([k]) => k);
