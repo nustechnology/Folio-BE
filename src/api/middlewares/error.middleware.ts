@@ -35,6 +35,5 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     status: 'error',
     message: responseMessage,
     ...(isAppError && normalizedError.code && { code: normalizedError.code }),
-    ...(env.NODE_ENV !== 'production' && { stack: normalizedError.stack }),
   });
 };

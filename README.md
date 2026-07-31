@@ -41,6 +41,7 @@ The application uses these variables:
 | `LOG_LEVEL` | Minimum Winston log level | `debug` locally, `info` in production |
 | `DATABASE_URL` | Host-based PostgreSQL connection used outside Compose | `postgresql://postgres:postgres@localhost:5432/folio-db` |
 | `JWT_TOKEN_SECRET` | Secret used to sign and verify access tokens | Use a long random value |
+| `SEED_USER_PASSWORD` | Password used for the seeded alice user (required by `yarn db:seed`) | `password123` |
 | `REFRESH_TOKEN_SECRET` | Secret used to sign and verify refresh tokens | Use a different long random value |
 | `ACCESS_TOKEN_EXPIRATION` | Access token lifetime | `15m` |
 | `REFRESH_TOKEN_EXPIRATION` | Refresh token lifetime | `30d` |

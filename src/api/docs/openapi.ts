@@ -1,7 +1,7 @@
 export const openApiDocument = {
   openapi: '3.0.3',
   info: {
-    title: 'Express Prisma API',
+    title: 'Folio API',
     version: '1.0.0',
     description:
       'API documentation for authentication and users.',
@@ -20,6 +20,10 @@ export const openApiDocument = {
     {
       name: 'Users',
       description: 'Authenticated user operations',
+    },
+    {
+      name: 'Spaces',
+      description: 'Research space management',
     },
   ],
   paths: {
@@ -196,6 +200,70 @@ export const openApiDocument = {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/LogoutSuccessResponse',
+                },
+              },
+            },
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized',
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError',
+          },
+        },
+      },
+    },
+    '/api/v1/spaces': {
+      get: {
+        tags: ['Spaces'],
+        summary: 'List research spaces',
+        description:
+          'Returns all non-archived spaces owned by the authenticated user, with optional search and sorting.',
+        operationId: 'listSpaces',
+        security: [
+          {
+            bearerAuth: [],
+          },
+        ],
+        parameters: [
+          {
+            name: 'search',
+            in: 'query',
+            required: false,
+            description: 'Filter by space name or research objective (case-insensitive)',
+            schema: {
+              type: 'string',
+            },
+          },
+          {
+            name: 'sort',
+            in: 'query',
+            required: false,
+            description: 'Sort order',
+            schema: {
+              type: 'string',
+              enum: ['recently-updated', 'recently-created', 'alphabetical-az', 'alphabetical-za'],
+              default: 'recently-updated',
+            },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'List of research spaces',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ListSpacesSuccessResponse',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Validation error (invalid search or sort query)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
                 },
               },
             },
@@ -444,6 +512,69 @@ export const openApiDocument = {
           },
         },
       },
+      Space: {
+        type: 'object',
+        required: ['id', 'name', 'researchObjective', 'isArchived', 'createdAt', 'updatedAt', 'sourceCount', 'noteCount'],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid',
+            example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
+          },
+          name: {
+            type: 'string',
+            example: 'AI Ethics Research',
+          },
+          researchObjective: {
+            type: 'string',
+            example: 'Explore ethical frameworks for AI decision-making.',
+          },
+          isArchived: {
+            type: 'boolean',
+            example: false,
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+          },
+          sourceCount: {
+            type: 'integer',
+            description: 'Number of sources in this space',
+            example: 3,
+          },
+          noteCount: {
+            type: 'integer',
+            description: 'Number of notes in this space',
+            example: 12,
+          },
+        },
+      },
+      ListSpacesSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success'],
+          },
+          data: {
+            type: 'object',
+            required: ['spaces'],
+            properties: {
+              spaces: {
+                type: 'array',
+                items: {
+                  $ref: '#/components/schemas/Space',
+                },
+              },
+            },
+          },
+        },
+      },
       UserSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -487,11 +618,6 @@ export const openApiDocument = {
               'INTERNAL_ERROR',
             ],
             nullable: true,
-          },
-          stack: {
-            type: 'string',
-            description:
-              'Stack trace returned only outside the production environment.',
           },
         },
       },

@@ -11,6 +11,8 @@ interface EnvInterface {
   REFRESH_TOKEN_SECRET: string;
   ACCESS_TOKEN_EXPIRATION: string;
   REFRESH_TOKEN_EXPIRATION: string;
+  CORS_ORIGIN: string;
+  SEED_USER_PASSWORD: string;
 }
 
 export const env: EnvInterface = {
@@ -18,12 +20,14 @@ export const env: EnvInterface = {
   NODE_ENV: process.env.NODE_ENV || "",
   LOG_LEVEL:
     process.env.LOG_LEVEL ||
-    (process.env.NODE_ENV === "production" ? "info" : "debug"),
-  DATABASE_URL: process.env.DATABASE_URL || "",
-  JWT_TOKEN_SECRET: process.env.JWT_TOKEN_SECRET || "",
-  REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || "",
-  ACCESS_TOKEN_EXPIRATION: process.env.ACCESS_TOKEN_EXPIRATION || "15m",
-  REFRESH_TOKEN_EXPIRATION: process.env.REFRESH_TOKEN_EXPIRATION || "30d",
+    (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  DATABASE_URL: process.env.DATABASE_URL || '',
+  JWT_TOKEN_SECRET: process.env.JWT_TOKEN_SECRET || '',
+  REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || '',
+  ACCESS_TOKEN_EXPIRATION: process.env.ACCESS_TOKEN_EXPIRATION || '15m',
+  REFRESH_TOKEN_EXPIRATION: process.env.REFRESH_TOKEN_EXPIRATION || '30d',
+  CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  SEED_USER_PASSWORD: process.env.SEED_USER_PASSWORD || '',
 };
 
 const missing = [
