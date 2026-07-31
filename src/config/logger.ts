@@ -29,15 +29,12 @@ const logger = winston.createLogger({
     winston.format.errors({ stack: true }),
     env.NODE_ENV === 'production'
       ? winston.format.json()
-      : winston.format.combine(
-          winston.format.colorize(),
-          developmentFormat
-        )
+      : winston.format.combine(winston.format.colorize(), developmentFormat)
   ),
   defaultMeta: {
-    service: 'nus-express-api',
+    service: 'nus-express-api'
   },
-  transports: [new winston.transports.Console()],
+  transports: [new winston.transports.Console()]
 });
 
 export default logger;

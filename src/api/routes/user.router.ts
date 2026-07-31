@@ -5,11 +5,11 @@ import { auth } from '~/api/middlewares/auth.middleware';
 import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import {
   validateBody,
-  validateParams,
+  validateParams
 } from '~/api/middlewares/validation.middleware';
 import {
   updateProfileSchema,
-  userIdParamsSchema,
+  userIdParamsSchema
 } from '~/api/routes/validators/user.validator';
 
 const router = Router();
