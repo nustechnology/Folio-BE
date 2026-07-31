@@ -9,6 +9,8 @@ RUN yarn install
 
 COPY . .
 
+RUN DATABASE_URL=postgresql://build:build@localhost:5432/build yarn build
+
 EXPOSE 4000
 
-CMD ["yarn", "dev"]
+CMD ["sh", "-c", "yarn db:migrate-prod && yarn start"]
