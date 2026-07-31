@@ -1,26 +1,20 @@
 {
   "compilerOptions": {
-    "module": "Preserve",
+    "module": "commonjs",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "target": "ES2023",
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
+    "target": "es6",
     "noImplicitAny": true,
-    "moduleResolution": "Bundler",
+    "moduleResolution": "node",
     "resolveJsonModule": true,
-    "baseUrl": ".",
-    "paths": {
-      "~/*": ["src/*"]
-    },
     "rootDir": "./src",
     "sourceMap": true,
     "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["src/*"]
+    }
   },
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "node_modules"
-  ],
+  "include": ["src"],
+  "exclude": ["node_modules"]
 }

@@ -17,7 +17,7 @@ yarn dev                   # starts tsx watch on src/index.ts
 | Command | Purpose |
 |---------|---------|
 | `yarn dev` | dev server with file watching (tsx watch) |
-| `yarn build` | clean rebuild: `tsc --build --clean && tsc` |
+| `yarn build` | `yarn db:generate && tsc --build --clean && tsc && tsc-alias -f -fe .js` |
 | `yarn lint` | ESLint on `src/**/*.ts` |
 | `yarn db:generate` | `prisma generate` (output: `src/generated/prisma`) |
 | `yarn db:migrate` | `prisma migrate dev` (interactive, prompts for name) |
@@ -42,7 +42,9 @@ Routers are thin (Joi validation, middleware composition, response). Handlers co
 
 ## Key conventions
 
-- **ESM** (`"type": "module"`) — all relative imports must include `.js` extension (e.g. `import './foo.js'`)
+- **CommonJS** — no `"type": "module"` in package.json; `tsc` emits CommonJS (`require()`/`exports`)
+- **Path alias**: `~/*` maps to `src/*` via tsconfig `paths`; all source imports use the `~/` alias (no relative imports in non-generated code). `tsc-alias -f -fe .js` rewrites aliases to relative `.js` paths in the emitted `dist/`
+- **Generated client** `src/generated/prisma` uses its own relative `.js` imports and `@ts-nocheck` — never edit directly
 - **No test framework** — skip any test-related commands or assumptions
 - **No CI** — no `.github/` workflows
 - **ESLint 10 flat config** — ignores `dist/` and `src/generated/`

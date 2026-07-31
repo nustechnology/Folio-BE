@@ -1,7 +1,6 @@
 {
   "name": "nus-express-template",
   "version": "0.0.0",
-  "type": "module",
   "scripts": {
     "build": "yarn db:generate && tsc --build --clean && tsc && tsc-alias -f -fe .js",
     "lint": "eslint src/**/*.ts",
