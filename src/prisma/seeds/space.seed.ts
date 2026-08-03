@@ -4,11 +4,15 @@ import prisma from '~/prisma/prisma.client';
 
 async function main() {
   if (env.NODE_ENV === 'production') {
-    throw new Error('Seed script refused to run against production environment.');
+    throw new Error(
+      'Seed script refused to run against production environment.'
+    );
   }
 
   if (!env.SEED_USER_PASSWORD) {
-    throw new Error('Missing required environment variable: SEED_USER_PASSWORD');
+    throw new Error(
+      'Missing required environment variable: SEED_USER_PASSWORD'
+    );
   }
 
   const email = 'alice@example.com';
@@ -66,11 +70,11 @@ async function main() {
       researchObjective: s.researchObjective,
       createdAt,
       updatedAt,
-      lastOpenedAt: updatedAt,
+      lastOpenedAt: updatedAt
     };
 
     const existing = await prisma.researchSpace.findUnique({
-      where: { id: spaceId },
+      where: { id: spaceId }
     });
 
     await prisma.researchSpace.upsert({
@@ -78,8 +82,8 @@ async function main() {
       update: spaceData,
       create: {
         id: spaceId,
-        ...spaceData,
-      },
+        ...spaceData
+      }
     });
 
     if (existing) {

@@ -34,24 +34,31 @@ const findManyByOwner = async (filters: ListFilters, options: ListOptions) => {
     ];
   }
 
-  const records = await prisma.researchSpace.findMany({
-    where,
-    include: {
-      _count: {
-        select: {
-          sources: true,
-          notes: true
+  const [records, totalCount] = await Promise.all([
+    prisma.researchSpace.findMany({
+      where,
+      include: {
+        _count: {
+          select: {
+            sources: true,
+            notes: true
+          }
         }
-      }
-    },
-    orderBy: sortOrderMap[options.sort]
-  });
+      },
+      orderBy: sortOrderMap[options.sort],
+      skip: (options.page - 1) * options.limit,
+      take: options.limit
+    }),
+    prisma.researchSpace.count({ where })
+  ]);
 
-  return records.map(({ _count, ...rest }) => ({
+  const spaces = records.map(({ _count, ...rest }) => ({
     ...rest,
     sourceCount: _count.sources,
     noteCount: _count.notes
   }));
+
+  return { spaces, totalCount };
 };
 
 const findByNameAndOwner = async (ownerId: string, name: string) => {
