@@ -94,7 +94,7 @@ model Passage {
   sourceId        String
   source          Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   content         String
-  embedding       Unsupported("vector(1536)")
+  embedding       Unsupported("vector(768)")
   searchVector    Unsupported("tsvector")
   tokenCount      Int
   strategyVersion String
