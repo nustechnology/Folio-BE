@@ -45,26 +45,63 @@ enum OriginType {
   SavedAssistantAnswer
 }
 
+enum SourceType {
+  File
+  Web
+  Manual
+}
+
+enum ProcessingState {
+  added
+  extracting_text
+  indexing_evidence
+  ready
+  failed
+}
+
 model Source {
   id                String   @id @default(uuid())
   researchSpaceId   String
   researchSpace     ResearchSpace @relation(fields: [researchSpaceId], references: [id])
-  sourceType        String
+  sourceType        SourceType
   title             String
   author            String?
-  originalFileUrl   String?
+  sourceUrl         String?
+  fileName          String?
+  fileSize          BigInt?
+  fileType          String?
+  fileHash          String?
+  pageCount         Int?
+  characterCount    Int?
   originalNoteId    String?
   originalNote      Note?         @relation("SourceFromNote", fields: [originalNoteId], references: [id])
   content           String
-  processingState   String        @default("pending")
+  processingState   ProcessingState @default(added)
+  processingError   String?
   retrievalIndexRef String?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
   citations Citation[]
+  passages   Passage[]
 
   @@index([researchSpaceId])
   @@index([originalNoteId])
+}
+
+model Passage {
+  id              String   @id @default(uuid())
+  sourceId        String
+  source          Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  content         String
+  embedding       Unsupported("vector(768)")
+  searchVector    Unsupported("tsvector")
+  tokenCount      Int
+  strategyVersion String
+  locator         Json
+  createdAt       DateTime @default(now())
+
+  @@index([sourceId])
 }
 
 model Conversation {

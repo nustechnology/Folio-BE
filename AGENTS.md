@@ -6,10 +6,11 @@
 cp .env.example .env      # then edit DATABASE_URL and JWT_TOKEN_SECRET
 nvm use                    # Node 22.17
 yarn install
-docker compose -f docker-compose-local.yml up -d db adminer  # start Postgres + Adminer
+docker compose up -d db redis minio  # start Postgres (pgvector) + Redis + MinIO
 yarn db:generate           # generate Prisma Client
 yarn db:migrate            # create/apply dev migrations
 yarn dev                   # starts tsx watch on src/index.ts
+yarn dev:worker            # separate terminal: ingestion worker
 ```
 
 ## Commands
@@ -17,25 +18,28 @@ yarn dev                   # starts tsx watch on src/index.ts
 | Command | Purpose |
 |---------|---------|
 | `yarn dev` | dev server with file watching (tsx watch) |
+| `yarn dev:worker` | ingestion worker (BullMQ + Redis) — run alongside `yarn dev` |
 | `yarn build` | `yarn db:generate && tsc --build --clean && tsc && tsc-alias -f -fe .js` |
 | `yarn lint` | ESLint on `src/**/*.ts` |
 | `yarn db:generate` | `prisma generate` (output: `src/generated/prisma`) |
 | `yarn db:migrate` | `prisma migrate dev` (interactive, prompts for name) |
 | `yarn db:migrate-prod` | `prisma migrate deploy` (apply committed migrations only) |
-| `yarn db:seed` | `ts-node src/prisma/seeds/*.ts` |
+| `yarn db:seed` | `tsx src/prisma/seeds/space.seed.ts` (tsx resolves `~/` aliases) |
 
 ## Architecture
 
 ```
-router (validate + middleware) → handler (business logic) → repository (Prisma queries)
+router (validate + middleware) → controller → service → repository (Prisma queries)
 ```
 
-Routers are thin (Joi validation, middleware composition, response). Handlers contain application logic. Repositories contain database queries. No service layer.
+Routers are thin (Joi validation, middleware composition, response). Controllers extract request data and return responses. Services contain business logic. Repositories contain database queries.
 
 - **Entrypoint**: `src/index.ts`
 - **Express app**: `src/api/index.ts` — mounts `/api/v1`, Swagger UI at `/api-docs`, global error middleware
-- **Routes**: `src/api/routes/index.ts` — mounts `auth`, `users`
-- **Config**: `src/config/enviroment.ts` (note: misspelled filename), `logger.ts`, `request-context.ts`
+- **Routes**: `src/api/routes/index.ts` — mounts `users`, `auth`, `spaces`, `sources`
+- **Ingestion worker**: `src/workers/ingestion.worker.ts` — separate process (`yarn dev:worker`); picks `ingestion` BullMQ jobs and runs extract → normalize → chunk → embed → index
+- **Queue**: `src/queues/ingestion.queue.ts` — enqueues `{ sourceId }` jobs after source creation/retry
+- **Config**: `src/config/enviroment.ts` (note: misspelled filename), `logger.ts`, `request-context.ts`, `redis.ts`, `minio.ts`
 - **Prisma schema**: `src/prisma/schema.prisma`
 - **Prisma config**: `prisma.config.ts` (Prisma 7 uses `defineConfig`)
 - **Generated client**: `src/generated/prisma` — treated as build artifact, never edit directly
@@ -62,13 +66,14 @@ Routers are thin (Joi validation, middleware composition, response). Handlers co
 
 ## Database
 
-- Local: `docker compose -f docker-compose-local.yml up -d db adminer`
+- Local: `docker compose up -d db redis minio`
 - `DATABASE_URL` uses host `localhost` for host-based dev, `db` when running inside Compose
+- Postgres uses the `pgvector/pgvector:pg16` image — the `vector` extension enables semantic search on `Passage.embedding`
 - Adminer at `localhost:8080`
-- Models: `User`, `Post`, `Comment`
+- Models: `User`, `ResearchSpace`, `Source`, `Passage`, `Conversation`, `Note`, `Notebook`, `Citation`, `NoteCitation`
 
 ## Docker
 
-- `docker compose -f docker-compose-local.yml up --build` runs everything
+- `docker compose up -d db redis minio` runs the dev services
 - `docker build --target production -t nus-express-api .` for production image
 - Production image omits Prisma CLI — run migrations separately in CI/release step
