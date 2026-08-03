@@ -20,6 +20,21 @@ interface EnvInterface {
   MINIO_BUCKET_NAME: string;
   MINIO_USE_SSL: string;
   MULTER_TEMP_DIR: string;
+  REDIS_HOST: string;
+  REDIS_PORT: string;
+  MODEL_EMBEDDING_BASE_URL: string;
+  MODEL_EMBEDDING_API_KEY: string;
+  MODEL_EMBEDDING_MODEL: string;
+  MODEL_EMBEDDING_DIMENSIONS: string;
+  MODEL_REQUEST_TIMEOUT_MS: string;
+  MODEL_MAX_RETRIES: string;
+  CHUNK_PRE_SPLIT_TOKENS: string;
+  CHUNK_TARGET_TOKENS: string;
+  CHUNK_MAX_TOKENS: string;
+  CHUNK_OVERLAP_TOKENS: string;
+  CHUNK_BREAKPOINT_PERCENTILE: string;
+  CHUNK_EMBED_BATCH_SIZE: string;
+  CHUNK_STRATEGY_VERSION: string;
 }
 
 const nodeEnv = process.env.NODE_ENV || '';
@@ -44,7 +59,25 @@ export const env: EnvInterface = {
   MINIO_ROOT_PASSWORD: process.env.MINIO_ROOT_PASSWORD || 'minioadmin',
   MINIO_BUCKET_NAME: process.env.MINIO_BUCKET_NAME || 'folio-sources',
   MINIO_USE_SSL: process.env.MINIO_USE_SSL || 'false',
-  MULTER_TEMP_DIR: process.env.MULTER_TEMP_DIR || ''
+  MULTER_TEMP_DIR: process.env.MULTER_TEMP_DIR || '',
+  REDIS_HOST: process.env.REDIS_HOST || 'localhost',
+  REDIS_PORT: process.env.REDIS_PORT || '6379',
+  MODEL_EMBEDDING_BASE_URL:
+    process.env.MODEL_EMBEDDING_BASE_URL || 'https://api.openai.com/v1',
+  MODEL_EMBEDDING_API_KEY: process.env.MODEL_EMBEDDING_API_KEY || '',
+  MODEL_EMBEDDING_MODEL:
+    process.env.MODEL_EMBEDDING_MODEL || 'text-embedding-3-small',
+  MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1536',
+  MODEL_REQUEST_TIMEOUT_MS: process.env.MODEL_REQUEST_TIMEOUT_MS || '60000',
+  MODEL_MAX_RETRIES: process.env.MODEL_MAX_RETRIES || '1',
+  CHUNK_PRE_SPLIT_TOKENS: process.env.CHUNK_PRE_SPLIT_TOKENS || '160',
+  CHUNK_TARGET_TOKENS: process.env.CHUNK_TARGET_TOKENS || '500',
+  CHUNK_MAX_TOKENS: process.env.CHUNK_MAX_TOKENS || '800',
+  CHUNK_OVERLAP_TOKENS: process.env.CHUNK_OVERLAP_TOKENS || '80',
+  CHUNK_BREAKPOINT_PERCENTILE: process.env.CHUNK_BREAKPOINT_PERCENTILE || '90',
+  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '64',
+  CHUNK_STRATEGY_VERSION:
+    process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1'
 };
 
 const missing = [
