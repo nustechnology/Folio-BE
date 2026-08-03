@@ -70,6 +70,7 @@ model Source {
   fileName          String?
   fileSize          BigInt?
   fileType          String?
+  fileHash          String?
   pageCount         Int?
   characterCount    Int?
   originalNoteId    String?
@@ -82,9 +83,25 @@ model Source {
   updatedAt         DateTime      @updatedAt
 
   citations Citation[]
+  passages   Passage[]
 
   @@index([researchSpaceId])
   @@index([originalNoteId])
+}
+
+model Passage {
+  id              String   @id @default(uuid())
+  sourceId        String
+  source          Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  content         String
+  embedding       Unsupported("vector(1536)")
+  searchVector    Unsupported("tsvector")
+  tokenCount      Int
+  strategyVersion String
+  locator         Json
+  createdAt       DateTime @default(now())
+
+  @@index([sourceId])
 }
 
 model Conversation {

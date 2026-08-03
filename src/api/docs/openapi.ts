@@ -657,6 +657,58 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/sources/{sourceId}/status': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Stream source processing status (SSE)',
+        description:
+          'Opens a Server-Sent Events stream that emits the source processing state in real time. Immediately sends the current state, then streams `{state, progress}` events as the ingestion worker advances the source through added (0%) → extracting_text (25%) → indexing_evidence (50%) → ready/failed (100%).',
+        operationId: 'streamSourceStatus',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Server-Sent Events stream',
+            content: {
+              'text/event-stream': {
+                schema: {
+                  type: 'string',
+                  example:
+                    'data: {"state":"extracting_text","progress":25}\n\ndata: {"state":"ready","progress":100}\n\n'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/api/v1/sources/{sourceId}/retry': {
       post: {
         tags: ['Sources'],

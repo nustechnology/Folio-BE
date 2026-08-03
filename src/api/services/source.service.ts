@@ -8,6 +8,11 @@ import { ErrorCode } from '~/api/errors/error-codes';
 import { ListSourceOptions } from '~/api/types/source';
 import { getContentType } from '~/api/utils/file.util';
 import { deleteObject, uploadFile } from '~/api/utils/minio.util';
+import {
+  computeFileHash,
+  verifyFileSignature
+} from '~/api/utils/signature.util';
+import { enqueueIngestion } from '~/queues/ingestion.queue';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 import UserRepository from '~/prisma/repositories/user.repository';
@@ -85,9 +90,31 @@ const createFile = async (
 ) => {
   await verifySpaceOwnership(spaceId, userId);
 
+  // 1. Validate the file signature (magic bytes) — the multer middleware only
+  // checked the extension, so a renamed file (e.g. virus.exe → paper.pdf) is
+  // rejected here. The temp file is cleaned up before throwing.
+  const { valid, detectedMime } = await verifyFileSignature(
+    file.path,
+    file.originalname
+  );
+  if (!valid) {
+    fs.unlink(file.path, () => {});
+    throw new AppError(
+      `The file content does not match its extension. Detected type: ${detectedMime ?? 'unknown'}.`,
+      StatusCodes.BAD_REQUEST,
+      ErrorCode.INVALID_FILE_SIGNATURE
+    );
+  }
+
+  // 2. Compute a SHA-256 checksum (integrity + future deduplication).
+  const fileHash = await computeFileHash(file.path);
+
+  // 3. Namespaced, collision-safe MinIO object key.
   const objectKey = `sources/${crypto.randomUUID()}/${file.originalname}`;
   const contentType = getContentType(file.originalname);
 
+  // 4. Upload the file to MinIO, removing the temp file on both success and
+  // failure.
   try {
     await uploadFileToMinio(objectKey, file);
   } catch (error) {
@@ -97,7 +124,9 @@ const createFile = async (
 
   fs.unlink(file.path, () => {});
 
-  return SourceRepository.create({
+  // 5. Create the source record in `added` state (the async worker will pick it
+  // up and run extraction → chunking → embedding → ready).
+  const source = await SourceRepository.create({
     researchSpace: { connect: { id: spaceId } },
     sourceType: 'File',
     title: data.title || file.originalname,
@@ -106,9 +135,14 @@ const createFile = async (
     fileName: file.originalname,
     fileType: contentType,
     fileSize: BigInt(file.size),
+    fileHash,
     content: '',
     processingState: 'added'
   });
+
+  // 6. Queue the ingestion job.
+  await enqueueIngestion(source.id);
+  return source;
 };
 
 const createWeb = async (
@@ -122,7 +156,7 @@ const createWeb = async (
 ) => {
   await verifySpaceOwnership(spaceId, userId);
 
-  return SourceRepository.create({
+  const source = await SourceRepository.create({
     researchSpace: { connect: { id: spaceId } },
     sourceType: 'Web',
     title: data.title || `Untitled Source - ${getUntitledDate()}`,
@@ -131,6 +165,9 @@ const createWeb = async (
     content: '',
     processingState: 'added'
   });
+
+  await enqueueIngestion(source.id);
+  return source;
 };
 
 const createManual = async (
@@ -146,7 +183,7 @@ const createManual = async (
 
   const user = await UserRepository.findById(userId);
 
-  return SourceRepository.create({
+  const source = await SourceRepository.create({
     researchSpace: { connect: { id: spaceId } },
     sourceType: 'Manual',
     title: data.title || `Untitled Source - ${getUntitledDate()}`,
@@ -154,6 +191,9 @@ const createManual = async (
     content: data.content,
     processingState: 'added'
   });
+
+  await enqueueIngestion(source.id);
+  return source;
 };
 
 const list = async (
@@ -195,10 +235,13 @@ const retry = async (sourceId: string, userId: string) => {
     );
   }
 
-  return SourceRepository.update(sourceId, {
+  const updated = await SourceRepository.update(sourceId, {
     processingState: 'added',
     processingError: null
   });
+
+  await enqueueIngestion(sourceId);
+  return updated;
 };
 
 export default {

@@ -4,6 +4,7 @@ import Joi from 'joi';
 
 import { AppError } from '~/api/errors/app.error';
 import SourceService from '~/api/services/source.service';
+import SseService from '~/api/services/sse.service';
 import { successResponse } from '~/api/routes/response';
 import {
   createFileSourceSchema,
@@ -92,10 +93,16 @@ const retry = async (req: Request, res: Response) => {
   return successResponse(res, { source });
 };
 
+const status = async (req: Request, res: Response) => {
+  const { sourceId } = req.params;
+  await SseService.streamStatus(sourceId, req.userId!, res);
+};
+
 export default {
   create,
   list,
   getById,
   remove,
-  retry
+  retry,
+  status
 };
