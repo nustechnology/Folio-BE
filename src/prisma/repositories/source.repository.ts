@@ -60,11 +60,22 @@ const countBySpaceId = async (spaceId: string) => {
   return prisma.source.count({ where: { researchSpaceId: spaceId } });
 };
 
+const findManyByOwnerId = async (ownerId: string) => {
+  return prisma.source.findMany({
+    where: {
+      researchSpace: {
+        ownerId
+      }
+    }
+  });
+};
+
 export default {
   create,
   findById,
   findBySpaceId,
   update,
   deleteById,
-  countBySpaceId
+  countBySpaceId,
+  findManyByOwnerId
 };

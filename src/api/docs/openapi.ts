@@ -681,27 +681,16 @@ export const openApiDocument = {
         }
       }
     },
-    '/api/v1/sources/{sourceId}/status': {
+    '/api/v1/sources/status': {
       get: {
         tags: ['Sources'],
-        summary: 'Stream source processing status (SSE)',
+        summary: 'Stream source processing status for all sources (SSE)',
         description:
-          'Opens a Server-Sent Events stream that emits the source processing state in real time. Immediately sends the current state, then streams `{state, progress}` events as the ingestion worker advances the source through added (0%) → extracting_text (25%) → indexing_evidence (50%) → ready/failed (100%).',
-        operationId: 'streamSourceStatus',
+          'Opens a Server-Sent Events stream that emits the source processing state in real time for all sources owned by the user. Immediately sends the current state for all owned sources, then streams `{sourceId, state, progress}` events as the ingestion worker advances any source through added (0%) → extracting_text (25%) → indexing_evidence (50%) → ready/failed (100%).',
+        operationId: 'streamAllSourceStatus',
         security: [
           {
             bearerAuth: []
-          }
-        ],
-        parameters: [
-          {
-            name: 'sourceId',
-            in: 'path',
-            required: true,
-            schema: {
-              type: 'string',
-              format: 'uuid'
-            }
           }
         ],
         responses: {
@@ -712,23 +701,13 @@ export const openApiDocument = {
                 schema: {
                   type: 'string',
                   example:
-                    'data: {"state":"extracting_text","progress":25}\n\ndata: {"state":"ready","progress":100}\n\n'
+                    'data: {"sourceId":"532a3be6-cd85-48ef-aa28-8d2ba8bb5eb0","state":"extracting_text","progress":25}\n\ndata: {"sourceId":"532a3be6-cd85-48ef-aa28-8d2ba8bb5eb0","state":"ready","progress":100}\n\n'
                 }
               }
             }
           },
           '401': {
             $ref: '#/components/responses/Unauthorized'
-          },
-          '404': {
-            description: 'Source not found (code: SOURCE_NOT_FOUND)',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/ErrorResponse'
-                }
-              }
-            }
           }
         }
       }
