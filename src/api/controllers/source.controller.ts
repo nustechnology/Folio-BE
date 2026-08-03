@@ -94,8 +94,7 @@ const retry = async (req: Request, res: Response) => {
 };
 
 const status = async (req: Request, res: Response) => {
-  const { sourceId } = req.params;
-  await SseService.streamStatus(sourceId, req.userId!, res);
+  await SseService.streamAllStatus(req.userId!, res);
 };
 
 export default {

@@ -1,9 +1,6 @@
 import { Response } from 'express';
 import { Redis } from 'ioredis';
-import { StatusCodes } from 'http-status-codes';
 
-import { AppError } from '~/api/errors/app.error';
-import { ErrorCode } from '~/api/errors/error-codes';
 import redis from '~/config/redis';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
@@ -12,10 +9,10 @@ import SpaceRepository from '~/prisma/repositories/space.repository';
 //
 // The ingestion worker runs in a separate process, so the API server can't see
 // its in-memory state. We bridge the two with Redis pub/sub: the worker calls
-// `publishStatus()` after every state change, and `streamStatus()` (the
-// GET /sources/:id/status endpoint) subscribes to that channel and forwards the
+// `publishStatus()` after every state change, and `streamAllStatus()` (the
+// GET /sources/status endpoint) subscribes to that channel and forwards the
 // events to the client as Server-Sent Events.
-const statusChannel = (sourceId: string): string => `source:${sourceId}`;
+const GLOBAL_STATUS_CHANNEL = 'sources:status';
 
 // Client-facing progress per processing stage (0-100%).
 const PROGRESS_MAP: Record<string, number> = {
@@ -27,8 +24,13 @@ const PROGRESS_MAP: Record<string, number> = {
 };
 
 // Serialize a status payload into an SSE `data:` frame.
-const buildEvent = (state: string, error?: string): string => {
+const buildEvent = (
+  sourceId: string,
+  state: string,
+  error?: string
+): string => {
   const payload: Record<string, unknown> = {
+    sourceId,
     state,
     progress: PROGRESS_MAP[state] ?? 0
   };
@@ -44,39 +46,18 @@ export const publishStatus = async (
   state: string,
   error?: string
 ): Promise<void> => {
-  await redis.publish(statusChannel(sourceId), buildEvent(state, error));
+  const message = JSON.stringify({ sourceId, state, error });
+  await redis.publish(GLOBAL_STATUS_CHANNEL, message);
 };
 
-// Express handler backing GET /sources/:sourceId/status.
-// Sends the current DB state immediately (so late-joining clients are not left
-// blank), then streams live events until the client disconnects.
-export const streamStatus = async (
-  sourceId: string,
+// Express handler backing GET /sources/status.
+// Sends the current DB state immediately for all sources owned by the user
+// (so late-joining clients are not left blank), then streams live events
+// until the client disconnects.
+export const streamAllStatus = async (
   userId: string,
   res: Response
 ): Promise<void> => {
-  // Ownership check happens BEFORE headers are written so a 401/404 is still a
-  // normal JSON error instead of a broken SSE stream.
-  const source = await SourceRepository.findById(sourceId);
-  if (!source) {
-    throw new AppError(
-      'Source not found',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.SOURCE_NOT_FOUND
-    );
-  }
-  const space = await SpaceRepository.findByIdAndOwner(
-    source.researchSpaceId,
-    userId
-  );
-  if (!space) {
-    throw new AppError(
-      'Source not found',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.SOURCE_NOT_FOUND
-    );
-  }
-
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -85,19 +66,40 @@ export const streamStatus = async (
   res.flushHeaders();
 
   // Emit the current state right away, then wait for worker-published events.
-  const current = await SourceRepository.findById(sourceId);
-  if (current) {
+  const currentSources = await SourceRepository.findManyByOwnerId(userId);
+  for (const source of currentSources) {
     res.write(
-      buildEvent(current.processingState, current.processingError ?? undefined)
+      buildEvent(
+        source.id,
+        source.processingState,
+        source.processingError ?? undefined
+      )
     );
   }
 
   // ioredis requires a dedicated connection for subscribe mode — a duplicate of
   // the shared client is created so the main connection stays free for queries.
   const subscriber: Redis = redis.duplicate();
-  await subscriber.subscribe(statusChannel(sourceId));
-  subscriber.on('message', (_channel, message) => {
-    res.write(message);
+  await subscriber.subscribe(GLOBAL_STATUS_CHANNEL);
+
+  subscriber.on('message', async (_channel, message) => {
+    try {
+      const { sourceId, state, error } = JSON.parse(message);
+
+      // Check if the user is authorized to see this source's status.
+      const source = await SourceRepository.findById(sourceId);
+      if (!source) return;
+
+      const space = await SpaceRepository.findByIdAndOwner(
+        source.researchSpaceId,
+        userId
+      );
+      if (!space) return;
+
+      res.write(buildEvent(sourceId, state, error));
+    } catch {
+      // Ignore parse/lookup errors
+    }
   });
 
   // Periodic comment frame keeps the connection alive past idle proxies.
@@ -108,9 +110,9 @@ export const streamStatus = async (
   // Cleanup: stop heartbeat + unsubscribe when the browser closes the stream.
   res.on('close', () => {
     clearInterval(heartbeat);
-    subscriber.unsubscribe(statusChannel(sourceId)).catch(() => {});
+    subscriber.unsubscribe(GLOBAL_STATUS_CHANNEL).catch(() => {});
     subscriber.disconnect();
   });
 };
 
-export default { publishStatus, streamStatus };
+export default { publishStatus, streamAllStatus };

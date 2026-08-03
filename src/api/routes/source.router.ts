@@ -24,18 +24,13 @@ router.get(
   asyncHandler(SourceController.list)
 );
 
+router.get('/status', auth, asyncHandler(SourceController.status));
+
 router.get(
   '/:sourceId',
   auth,
   validateParams(sourceIdParamSchema),
   asyncHandler(SourceController.getById)
-);
-
-router.get(
-  '/:sourceId/status',
-  auth,
-  validateParams(sourceIdParamSchema),
-  asyncHandler(SourceController.status)
 );
 
 router.delete(
