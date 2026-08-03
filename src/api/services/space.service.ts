@@ -6,7 +6,20 @@ import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
 
 const list = async (ownerId: string, options: ListOptions) => {
-  return SpaceRepository.findManyByOwner({ ownerId }, options);
+  const { spaces, totalCount } = await SpaceRepository.findManyByOwner(
+    { ownerId },
+    options
+  );
+  const totalPages = Math.ceil(totalCount / options.limit);
+  return {
+    spaces,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      totalCount,
+      totalPages
+    }
+  };
 };
 
 const create = async (

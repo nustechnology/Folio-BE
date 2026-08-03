@@ -3,13 +3,23 @@ import { StatusCodes } from 'http-status-codes';
 
 import { SpaceSort } from '~/api/types/space';
 import SpaceService from '~/api/services/space.service';
-import { successResponse } from '~/api/routes/response';
+import { paginatedResponse } from '~/api/routes/response';
 
 const list = async (req: Request, res: Response) => {
-  const { search, sort } = req.query as { search?: string; sort: SpaceSort };
-  const spaces = await SpaceService.list(req.userId!, { search, sort });
+  const { search, sort, page, limit } = req.query as unknown as {
+    search?: string;
+    sort: SpaceSort;
+    page: number;
+    limit: number;
+  };
+  const { spaces, pagination } = await SpaceService.list(req.userId!, {
+    search,
+    sort,
+    page,
+    limit
+  });
 
-  return successResponse(res, { spaces });
+  return paginatedResponse(res, 'spaces', spaces, pagination);
 };
 
 const create = async (req: Request, res: Response) => {

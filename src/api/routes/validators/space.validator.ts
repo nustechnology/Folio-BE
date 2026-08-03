@@ -1,6 +1,6 @@
 import Joi from 'joi';
 
-import { NAME, OBJECTIVE_MAX_LENGTH } from '~/api/utils/constants';
+import { NAME, OBJECTIVE_MAX_LENGTH, PAGINATION } from '~/api/utils/constants';
 
 export const listSpacesQuerySchema = Joi.object({
   search: Joi.string().allow('').optional(),
@@ -11,7 +11,13 @@ export const listSpacesQuerySchema = Joi.object({
       'alphabetical-az',
       'alphabetical-za'
     )
-    .default('recently-updated')
+    .default('recently-updated'),
+  page: Joi.number().integer().min(1).default(PAGINATION.DEFAULT_PAGE),
+  limit: Joi.number()
+    .integer()
+    .min(1)
+    .max(PAGINATION.MAX_LIMIT)
+    .default(PAGINATION.DEFAULT_LIMIT)
 });
 
 export const createSpaceSchema = Joi.object({
