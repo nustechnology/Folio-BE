@@ -315,6 +315,30 @@ export const openApiDocument = {
               ],
               default: 'recently-updated'
             }
+          },
+          {
+            name: 'page',
+            in: 'query',
+            required: false,
+            description: 'Page number (default: 1)',
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              default: 1
+            }
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            description:
+              'Number of spaces to return per page (default: 10, max: 100)',
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 100,
+              default: 10
+            }
           }
         ],
         responses: {
@@ -333,10 +357,10 @@ export const openApiDocument = {
             content: {
               'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/ErrorResponse',
-                },
-              },
-            },
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           },
           '401': {
             $ref: '#/components/responses/Unauthorized'
@@ -682,12 +706,34 @@ export const openApiDocument = {
           },
           data: {
             type: 'object',
-            required: ['spaces'],
+            required: ['spaces', 'pagination'],
             properties: {
               spaces: {
                 type: 'array',
                 items: {
                   $ref: '#/components/schemas/Space'
+                }
+              },
+              pagination: {
+                type: 'object',
+                required: ['page', 'limit', 'totalCount', 'totalPages'],
+                properties: {
+                  page: {
+                    type: 'integer',
+                    example: 1
+                  },
+                  limit: {
+                    type: 'integer',
+                    example: 10
+                  },
+                  totalCount: {
+                    type: 'integer',
+                    example: 42
+                  },
+                  totalPages: {
+                    type: 'integer',
+                    example: 5
+                  }
                 }
               }
             }

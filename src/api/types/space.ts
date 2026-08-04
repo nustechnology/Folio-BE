@@ -7,4 +7,6 @@ export type SpaceSort =
 export type ListOptions = {
   search?: string;
   sort: SpaceSort;
+  page: number;
+  limit: number;
 };

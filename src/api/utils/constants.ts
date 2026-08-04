@@ -16,3 +16,9 @@ export const DURATION_DECIMAL_PRECISION = 2;
 export const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 
 export const SERVER_ERROR_THRESHOLD = 500;
+
+export const PAGINATION = {
+  DEFAULT_PAGE: 1,
+  DEFAULT_LIMIT: 10,
+  MAX_LIMIT: 100
+} as const;
