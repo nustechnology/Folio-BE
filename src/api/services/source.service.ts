@@ -204,7 +204,20 @@ const list = async (
   options: ListSourceOptions
 ) => {
   await verifySpaceOwnership(spaceId, userId);
-  return SourceRepository.findBySpaceId(spaceId, options);
+  const { sources, totalCount } = await SourceRepository.findBySpaceId(
+    spaceId,
+    options
+  );
+  const totalPages = Math.ceil(totalCount / options.limit);
+  return {
+    sources,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      totalCount,
+      totalPages
+    }
+  };
 };
 
 const getById = async (sourceId: string, userId: string) => {
