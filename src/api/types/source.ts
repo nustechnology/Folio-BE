@@ -8,4 +8,6 @@ export type ListSourceOptions = {
   processingState?: ProcessingState;
   search?: string;
   sort: SourceSort;
+  page: number;
+  limit: number;
 };
