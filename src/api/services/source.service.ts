@@ -5,6 +5,8 @@ import { StatusCodes } from 'http-status-codes';
 
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
+import { env } from '~/config/enviroment';
+import { BUCKET_NAME } from '~/config/minio';
 import { ListSourceOptions } from '~/api/types/source';
 import { getContentType } from '~/api/utils/file.util';
 import { deleteObject, uploadFile } from '~/api/utils/minio.util';
@@ -244,6 +246,26 @@ const retry = async (sourceId: string, userId: string) => {
   return updated;
 };
 
+const getPreviewUrl = async (
+  sourceId: string,
+  userId: string
+): Promise<string | null> => {
+  const source = await verifySourceOwnership(sourceId, userId);
+
+  if (source.sourceType === 'Web') {
+    return source.sourceUrl;
+  }
+
+  if (source.sourceType === 'File' && source.sourceUrl) {
+    const protocol = env.MINIO_USE_SSL === 'true' ? 'https' : 'http';
+    const host =
+      env.MINIO_ENDPOINT === 'minio' ? 'localhost' : env.MINIO_ENDPOINT;
+    return `${protocol}://${host}:${env.MINIO_PORT}/${BUCKET_NAME}/${source.sourceUrl}`;
+  }
+
+  return null;
+};
+
 export default {
   createFile,
   createWeb,
@@ -251,5 +273,6 @@ export default {
   list,
   getById,
   remove,
-  retry
+  retry,
+  getPreviewUrl
 };

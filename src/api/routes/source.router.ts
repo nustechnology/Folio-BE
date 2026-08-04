@@ -33,6 +33,13 @@ router.get(
   asyncHandler(SourceController.getById)
 );
 
+router.get(
+  '/:sourceId/preview',
+  auth,
+  validateParams(sourceIdParamSchema),
+  asyncHandler(SourceController.getPreviewUrl)
+);
+
 router.delete(
   '/:sourceId',
   auth,
