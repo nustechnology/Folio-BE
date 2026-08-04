@@ -39,10 +39,17 @@ const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
     ];
   }
 
-  return prisma.source.findMany({
-    where,
-    orderBy: sortOrderMap[options.sort]
-  });
+  const [records, totalCount] = await Promise.all([
+    prisma.source.findMany({
+      where,
+      orderBy: sortOrderMap[options.sort],
+      skip: (options.page - 1) * options.limit,
+      take: options.limit
+    }),
+    prisma.source.count({ where })
+  ]);
+
+  return { sources: records, totalCount };
 };
 
 const update = async (id: string, data: Prisma.SourceUpdateInput) => {

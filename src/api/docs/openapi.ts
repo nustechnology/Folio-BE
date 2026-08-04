@@ -547,6 +547,27 @@ export const openApiDocument = {
               enum: ['recently-added', 'alphabetical-az', 'alphabetical-za'],
               default: 'recently-added'
             }
+          },
+          {
+            name: 'page',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              default: 1
+            }
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 50,
+              default: 20
+            }
           }
         ],
         responses: {
@@ -1473,12 +1494,34 @@ export const openApiDocument = {
           },
           data: {
             type: 'object',
-            required: ['sources'],
+            required: ['sources', 'pagination'],
             properties: {
               sources: {
                 type: 'array',
                 items: {
                   $ref: '#/components/schemas/Source'
+                }
+              },
+              pagination: {
+                type: 'object',
+                required: ['page', 'limit', 'totalCount', 'totalPages'],
+                properties: {
+                  page: {
+                    type: 'integer',
+                    example: 1
+                  },
+                  limit: {
+                    type: 'integer',
+                    example: 10
+                  },
+                  totalCount: {
+                    type: 'integer',
+                    example: 42
+                  },
+                  totalPages: {
+                    type: 'integer',
+                    example: 5
+                  }
                 }
               }
             }
