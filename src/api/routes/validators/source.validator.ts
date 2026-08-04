@@ -100,3 +100,33 @@ export const listSourcesQuerySchema = Joi.object({
     .max(PAGINATION.MAX_LIMIT)
     .default(PAGINATION.DEFAULT_LIMIT)
 });
+
+export const updateSourceSchema = Joi.object({
+  title: Joi.string()
+    .trim()
+    .min(1)
+    .max(SOURCE_TITLE_MAX_LENGTH)
+    .required()
+    .messages({
+      'string.empty': 'Title is required',
+      'string.max': 'Title must be at most 200 characters',
+      'any.required': 'Title is required'
+    }),
+  author: Joi.string()
+    .trim()
+    .max(SOURCE_AUTHOR_MAX_LENGTH)
+    .allow('', null)
+    .optional()
+    .messages({
+      'string.max': 'Author name must be at most 100 characters'
+    }),
+  content: Joi.string()
+    .trim()
+    .min(SOURCE_CONTENT_MIN_LENGTH)
+    .max(SOURCE_CONTENT_MAX_LENGTH)
+    .optional()
+    .messages({
+      'string.min': 'Content must be at least 10 characters long.',
+      'string.max': 'Content exceeds maximum limit of 50,000 characters.'
+    })
+});

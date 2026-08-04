@@ -27,6 +27,10 @@ export const openApiDocument = {
     {
       name: 'Sources',
       description: 'Source management within a research space'
+    },
+    {
+      name: 'Passages',
+      description: 'Source text segments and passages operations'
     }
   ],
   paths: {
@@ -650,6 +654,77 @@ export const openApiDocument = {
           }
         }
       },
+      patch: {
+        tags: ['Sources'],
+        summary: 'Update source metadata or content',
+        description:
+          'Updates the title, author, or content of a source. If the content of a Manual source is updated, it triggers re-extraction and re-ingestion.',
+        operationId: 'updateSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/UpdateSourceRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Source updated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
       delete: {
         tags: ['Sources'],
         summary: 'Delete a source',
@@ -783,6 +858,57 @@ export const openApiDocument = {
           },
           '404': {
             description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/passages/{passageId}': {
+      get: {
+        tags: ['Passages'],
+        summary: 'Get a single passage belonging to a source',
+        operationId: 'getPassage',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'passageId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Passage found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PassageSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Passage not found (code: PASSAGE_NOT_FOUND)',
             content: {
               'application/json': {
                 schema: {
@@ -1373,6 +1499,98 @@ export const openApiDocument = {
           updatedAt: {
             type: 'string',
             format: 'date-time'
+          },
+          structuredContent: {
+            type: 'object',
+            nullable: true,
+            description:
+              'JSON format-specific layout payload for frontend rendering'
+          }
+        }
+      },
+      UpdateSourceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: {
+            type: 'string',
+            maxLength: 255,
+            example: 'Updated AI Ethics Research Paper'
+          },
+          author: {
+            type: 'string',
+            maxLength: 100,
+            example: 'Alice Johnson'
+          },
+          content: {
+            type: 'string',
+            minLength: 10,
+            maxLength: 50000,
+            example: 'This is the updated manual source content text note...'
+          }
+        }
+      },
+      Passage: {
+        type: 'object',
+        required: [
+          'id',
+          'sourceId',
+          'content',
+          'tokenCount',
+          'strategyVersion',
+          'locator',
+          'createdAt'
+        ],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid',
+            example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid',
+            example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901'
+          },
+          content: {
+            type: 'string',
+            example: 'This is the clean passage text segment...'
+          },
+          tokenCount: {
+            type: 'integer',
+            example: 120
+          },
+          strategyVersion: {
+            type: 'string',
+            example: '1.0.0'
+          },
+          locator: {
+            type: 'object',
+            example: { index: 0, range: [0, 50] }
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            example: '2026-08-04T07:21:03.069Z'
+          }
+        }
+      },
+      PassageSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            example: 'success'
+          },
+          data: {
+            type: 'object',
+            required: ['passage'],
+            properties: {
+              passage: {
+                $ref: '#/components/schemas/Passage'
+              }
+            }
           }
         }
       },

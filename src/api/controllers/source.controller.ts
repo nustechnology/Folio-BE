@@ -88,6 +88,12 @@ const getById = async (req: Request, res: Response) => {
   return successResponse(res, { source });
 };
 
+const update = async (req: Request, res: Response) => {
+  const { sourceId } = req.params;
+  const source = await SourceService.update(sourceId, req.userId!, req.body);
+  return successResponse(res, { source });
+};
+
 const remove = async (req: Request, res: Response) => {
   const { sourceId } = req.params;
   const result = await SourceService.remove(sourceId, req.userId!);
@@ -127,6 +133,7 @@ export default {
   create,
   list,
   getById,
+  update,
   remove,
   retry,
   getPreviewUrl,
