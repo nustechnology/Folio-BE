@@ -93,6 +93,25 @@ const retry = async (req: Request, res: Response) => {
   return successResponse(res, { source });
 };
 
+const getPreviewUrl = async (req: Request, res: Response) => {
+  const { sourceId } = req.params;
+  const previewUrl = await SourceService.getPreviewUrl(sourceId, req.userId!);
+
+  if (!previewUrl) {
+    throw new AppError(
+      'No preview URL available for this source type',
+      StatusCodes.BAD_REQUEST
+    );
+  }
+
+  const acceptHeader = req.headers.accept || '';
+  if (req.query.redirect === 'true' || acceptHeader.includes('text/html')) {
+    return res.redirect(previewUrl);
+  }
+
+  return successResponse(res, { previewUrl });
+};
+
 const status = async (req: Request, res: Response) => {
   await SseService.streamAllStatus(req.userId!, res);
 };
@@ -103,5 +122,6 @@ export default {
   getById,
   remove,
   retry,
+  getPreviewUrl,
   status
 };
