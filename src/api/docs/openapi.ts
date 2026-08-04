@@ -776,6 +776,98 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/sources/{sourceId}/preview': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Get preview URL or redirect to preview source',
+        description:
+          'Constructs a public/anonymous preview URL for the source. If requested directly via a web browser (accepting text/html) or with `redirect=true` query parameter, it redirects to the MinIO object URL directly.',
+        operationId: 'getPreviewUrl',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'redirect',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'boolean'
+            },
+            description:
+              'Set to true to force redirecting to the object URL directly instead of returning a JSON response.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Preview URL returned',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      example: 'success'
+                    },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        previewUrl: {
+                          type: 'string',
+                          example:
+                            'http://localhost:9000/folio-sources/sources/a24bc98e/paper.pdf'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '302': {
+            description: 'Redirected to MinIO object storage preview URL'
+          },
+          '400': {
+            description: 'Invalid source type for preview',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
     '/api/v1/users/{id}': {
       get: {
         tags: ['Users'],
