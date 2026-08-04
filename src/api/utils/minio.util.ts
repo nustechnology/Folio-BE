@@ -26,16 +26,24 @@ export const ensureBucket = async (): Promise<void> => {
   }
 };
 
+const getCleanKey = (key: string): string => {
+  if (key.startsWith(`${BUCKET_NAME}/`)) {
+    return key.substring(BUCKET_NAME.length + 1);
+  }
+  return key;
+};
+
 // Upload an uploaded multer file (stored on disk at file.path) to MinIO,
 // streaming it rather than buffering so memory stays flat.
 export const uploadFile = async (
   objectKey: string,
   file: Express.Multer.File
 ): Promise<void> => {
+  const cleanKey = getCleanKey(objectKey);
   await s3Client.send(
     new PutObjectCommand({
       Bucket: BUCKET_NAME,
-      Key: objectKey,
+      Key: cleanKey,
       Body: fs.createReadStream(file.path),
       ContentType: getContentType(file.originalname),
       ContentLength: file.size
@@ -45,16 +53,18 @@ export const uploadFile = async (
 
 // Remove an object (used when a file source is deleted).
 export const deleteObject = async (objectKey: string): Promise<void> => {
+  const cleanKey = getCleanKey(objectKey);
   await s3Client.send(
-    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey })
+    new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: cleanKey })
   );
 };
 
 // Download an object fully into a Buffer — used by the extraction pipeline to
 // pull the original file before parsing it.
 export const downloadObject = async (objectKey: string): Promise<Buffer> => {
+  const cleanKey = getCleanKey(objectKey);
   const response = await s3Client.send(
-    new GetObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey })
+    new GetObjectCommand({ Bucket: BUCKET_NAME, Key: cleanKey })
   );
   const body = response.Body as Readable;
   const chunks: Buffer[] = [];
