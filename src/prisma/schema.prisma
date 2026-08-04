@@ -1,22 +1,24 @@
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
+  extensions = [vector]
 }
 
 model User {
-  id                    String    @id @default(uuid())
-  name                  String
-  email                 String    @unique
-  password              String
-  refreshToken          String?   @unique
-  tokenVersion          Int       @default(0)
+  id           String  @id @default(uuid())
+  name         String
+  email        String  @unique
+  password     String
+  refreshToken String? @unique
+  tokenVersion Int     @default(0)
 
-  createdAt             DateTime  @default(now())
-  lastActiveAt          DateTime  @default(now())
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
 
   researchSpaces ResearchSpace[]
 }
@@ -60,9 +62,9 @@ enum ProcessingState {
 }
 
 model Source {
-  id                String   @id @default(uuid())
+  id                String          @id @default(uuid())
   researchSpaceId   String
-  researchSpace     ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  researchSpace     ResearchSpace   @relation(fields: [researchSpaceId], references: [id])
   sourceType        SourceType
   title             String
   author            String?
@@ -74,45 +76,46 @@ model Source {
   pageCount         Int?
   characterCount    Int?
   originalNoteId    String?
-  originalNote      Note?         @relation("SourceFromNote", fields: [originalNoteId], references: [id])
+  originalNote      Note?           @relation("SourceFromNote", fields: [originalNoteId], references: [id])
   content           String
+  structuredContent Json?
   processingState   ProcessingState @default(added)
   processingError   String?
   retrievalIndexRef String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   citations Citation[]
-  passages   Passage[]
+  passages  Passage[]
 
   @@index([researchSpaceId])
   @@index([originalNoteId])
 }
 
 model Passage {
-  id              String   @id @default(uuid())
+  id              String                     @id @default(uuid())
   sourceId        String
-  source          Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  source          Source                     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   content         String
   embedding       Unsupported("vector(768)")
   searchVector    Unsupported("tsvector")
   tokenCount      Int
   strategyVersion String
   locator         Json
-  createdAt       DateTime @default(now())
+  createdAt       DateTime                   @default(now())
 
   @@index([sourceId])
 }
 
 model Conversation {
-  id                    String   @id @default(uuid())
-  researchSpaceId       String
-  researchSpace         ResearchSpace @relation(fields: [researchSpaceId], references: [id])
-  title                 String
-  messages              Json     @default("[]")
-  activeRetrievalScope  Json?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                   String        @id @default(uuid())
+  researchSpaceId      String
+  researchSpace        ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  title                String
+  messages             Json          @default("[]")
+  activeRetrievalScope Json?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   notes Note[]
 
@@ -120,19 +123,19 @@ model Conversation {
 }
 
 model Note {
-  id                    String       @id @default(uuid())
-  researchSpaceId       String
-  researchSpace         ResearchSpace @relation(fields: [researchSpaceId], references: [id])
-  title                 String
-  content               String
-  originType            OriginType
-  originConversationId  String?
-  originConversation    Conversation? @relation(fields: [originConversationId], references: [id])
-  originMessageId       String?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  id                   String        @id @default(uuid())
+  researchSpaceId      String
+  researchSpace        ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  title                String
+  content              String
+  originType           OriginType
+  originConversationId String?
+  originConversation   Conversation? @relation(fields: [originConversationId], references: [id])
+  originMessageId      String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
-  sourcesCreated     Source[]           @relation("SourceFromNote")
+  sourcesCreated     Source[]       @relation("SourceFromNote")
   citationReferences NoteCitation[]
 
   @@index([researchSpaceId])
@@ -149,15 +152,15 @@ model Notebook {
 }
 
 model Citation {
-  id                  String   @id @default(uuid())
-  sourceId            String
-  source              Source   @relation(fields: [sourceId], references: [id])
-  supportingPassage   String
-  pageReference       String?
-  paragraphReference  String?
-  sectionReference    String?
-  passageLocator      String?
-  createdAt           DateTime @default(now())
+  id                 String   @id @default(uuid())
+  sourceId           String
+  source             Source   @relation(fields: [sourceId], references: [id])
+  supportingPassage  String
+  pageReference      String?
+  paragraphReference String?
+  sectionReference   String?
+  passageLocator     String?
+  createdAt          DateTime @default(now())
 
   noteReferences NoteCitation[]
 

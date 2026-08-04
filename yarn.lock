@@ -4127,6 +4127,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"marked@npm:^18.0.7":
+  version: 18.0.7
+  resolution: "marked@npm:18.0.7"
+  bin:
+    marked: bin/marked.js
+  checksum: 10c0/84fc25d8583ff5c7b200dc6719e238472bb50e93b656b724ddfac4469c71ab1ef36bc8b4c1b2b26efabe713fd9a3437e3fd8af8555379c988dd902299842a730
+  languageName: node
+  linkType: hard
+
 "math-intrinsics@npm:^1.1.0":
   version: 1.1.0
   resolution: "math-intrinsics@npm:1.1.0"
@@ -4982,6 +4991,7 @@ __metadata:
     jsonwebtoken: "npm:^9.0.0"
     jszip: "npm:^3.10.1"
     mammoth: "npm:^1.12.0"
+    marked: "npm:^18.0.7"
     mdast-util-to-string: "npm:^4.0.0"
     multer: "npm:1.4.5-lts.1"
     nodemon: "npm:^2.0.16"

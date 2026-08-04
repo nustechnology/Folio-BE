@@ -18,6 +18,7 @@ import { enqueueIngestion } from '~/queues/ingestion.queue';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 import UserRepository from '~/prisma/repositories/user.repository';
+import PassageRepository from '~/prisma/repositories/passage.repository';
 
 const verifySpaceOwnership = async (spaceId: string, userId: string) => {
   const space = await SpaceRepository.findByIdAndOwner(spaceId, userId);
@@ -259,6 +260,40 @@ const retry = async (sourceId: string, userId: string) => {
   return updated;
 };
 
+const update = async (
+  sourceId: string,
+  userId: string,
+  data: { title: string; author?: string | null; content?: string }
+) => {
+  const source = await verifySourceOwnership(sourceId, userId);
+
+  const updatePayload: Record<string, any> = {
+    title: data.title,
+    author: data.author || 'Unknown Author'
+  };
+
+  // If content of a manual text source changed, wipe existing passages and re-enqueue ingestion
+  if (
+    source.sourceType === 'Manual' &&
+    data.content !== undefined &&
+    data.content !== source.content
+  ) {
+    updatePayload.content = data.content;
+    updatePayload.characterCount = data.content.length;
+    updatePayload.processingState = 'added';
+    updatePayload.processingError = null;
+
+    // Delete existing passages since the content has changed
+    await PassageRepository.deleteBySourceId(sourceId);
+
+    const updated = await SourceRepository.update(sourceId, updatePayload);
+    await enqueueIngestion(sourceId);
+    return updated;
+  }
+
+  return SourceRepository.update(sourceId, updatePayload);
+};
+
 const getPreviewUrl = async (
   sourceId: string,
   userId: string
@@ -285,6 +320,7 @@ export default {
   createManual,
   list,
   getById,
+  update,
   remove,
   retry,
   getPreviewUrl

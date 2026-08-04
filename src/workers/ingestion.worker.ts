@@ -8,6 +8,7 @@ import { env } from '~/config/enviroment';
 import redis from '~/config/redis';
 import { INGESTION_QUEUE_NAME } from '~/queues/ingestion.queue';
 import SourceRepository from '~/prisma/repositories/source.repository';
+import logger from '~/config/logger';
 
 // Ingestion worker: runs as a SEPARATE process (`yarn dev:worker`).
 // It consumes `ingestion` jobs enqueued by the API server (source.service) and
@@ -19,12 +20,24 @@ const worker = new Worker(
   INGESTION_QUEUE_NAME,
   async (job) => {
     const { sourceId } = job.data as { sourceId: string };
+    logger.info('[Worker] Ingestion job picked up by worker', {
+      jobId: job.id,
+      sourceId
+    });
 
     const source = await SourceRepository.findById(sourceId);
     if (!source) {
+      logger.error('[Worker] Source not found in database', {
+        sourceId,
+        jobId: job.id
+      });
       throw new Error(`Source not found: ${sourceId}`);
     }
 
+    logger.debug('[Worker] Updating source state to extracting_text', {
+      sourceId,
+      title: source.title
+    });
     // Stage 1 — mark as extracting and clear any error from a previous attempt
     // (e.g. after a retry reset the source back to `added`).
     await SourceRepository.update(sourceId, {
@@ -33,18 +46,34 @@ const worker = new Worker(
     });
     await publishStatus(sourceId, 'extracting_text');
 
+    logger.info('[Worker] Invoking text extraction service', {
+      sourceId,
+      sourceType: source.sourceType,
+      fileName: source.fileName,
+      fileType: source.fileType
+    });
+
     // Extract raw text based on the source type (PDF/DOCX/MD/Web/Manual).
     // This may download the file from MinIO (file sources) or fetch a URL (web).
     const result = await extract({
       sourceType: source.sourceType,
       sourceUrl: source.sourceUrl,
-      content: source.content
+      content: source.content,
+      fileType: source.fileType
+    });
+
+    logger.info('[Worker] Text extraction completed successfully', {
+      sourceId,
+      characterCount: result.characterCount,
+      hasStructuredContent: !!result.structuredContent,
+      structuredType: result.structuredContent?.type
     });
 
     // Persist the extracted text + metadata. Web extraction may also enrich the
     // title/author from the page <head> if the user left them blank.
     await SourceRepository.update(sourceId, {
       content: result.content,
+      structuredContent: result.structuredContent || null,
       ...(result.title ? { title: result.title } : {}),
       ...(result.author ? { author: result.author } : {}),
       ...(result.pageCount !== undefined
@@ -53,6 +82,9 @@ const worker = new Worker(
       characterCount: result.characterCount
     });
 
+    logger.debug('[Worker] Updating source state to indexing_evidence', {
+      sourceId
+    });
     // Stage 2 — mark as indexing (extraction done, semantic indexing underway).
     await SourceRepository.update(sourceId, {
       processingState: 'indexing_evidence'
@@ -63,15 +95,42 @@ const worker = new Worker(
     // pipeline (pre-split → embed units → cosine breakpoints → assemble
     // passages → embed passages → store Passage rows with pgvector vectors).
     if (result.content.trim().length > 0) {
+      logger.info(
+        '[Worker] Starting text normalization and semantic chunking',
+        {
+          sourceId,
+          contentLength: result.content.length
+        }
+      );
       const blocks = normalizeToBlocks(result.content);
+      logger.debug(
+        '[Worker] Text normalized into blocks. Emitting chunking pipeline',
+        {
+          sourceId,
+          blockCount: blocks.length
+        }
+      );
       await chunkAndEmbed(blocks, sourceId);
+      logger.info('[Worker] Chunking and embedding pipeline finished', {
+        sourceId
+      });
+    } else {
+      logger.warn(
+        '[Worker] Content is empty, skipping chunking and indexing steps',
+        { sourceId }
+      );
     }
 
+    logger.debug('[Worker] Updating source state to ready', { sourceId });
     // Stage 4 — all passages stored and indexed → source is searchable.
     await SourceRepository.update(sourceId, {
       processingState: 'ready'
     });
     await publishStatus(sourceId, 'ready');
+    logger.info('[Worker] Ingestion job fully completed', {
+      jobId: job.id,
+      sourceId
+    });
   },
   {
     connection: redis,
@@ -80,28 +139,42 @@ const worker = new Worker(
 );
 
 worker.on('completed', (job) => {
-  console.log(`[worker] ingestion completed: ${job.id}`);
+  logger.info(`[Worker] Job completed: ${job.id}`);
 });
 
 worker.on('failed', async (job, error) => {
   // Any throw inside the processor lands here (BullMQ retries up to the job's
   // `attempts` limit first). Mark the source failed + stream the error so the
   // UI can show the red badge and enable the Retry action.
-  console.error(`[worker] ingestion failed: ${job?.id ?? 'unknown'}`, error);
+  logger.error(`[Worker] Job failed: ${job?.id ?? 'unknown'}`, {
+    jobId: job?.id,
+    error: error.message,
+    stack: error.stack
+  });
   if (job) {
     const { sourceId } = job.data as { sourceId: string };
     await SourceRepository.update(sourceId, {
       processingState: 'failed',
       processingError: error.message
-    }).catch(() => {});
-    await publishStatus(sourceId, 'failed', error.message).catch(() => {});
+    }).catch((err) => {
+      logger.error('[Worker] Failed to update source error state', {
+        sourceId,
+        err
+      });
+    });
+    await publishStatus(sourceId, 'failed', error.message).catch((err) => {
+      logger.error('[Worker] Failed to publish source error status via SSE', {
+        sourceId,
+        err
+      });
+    });
   }
 });
 
 worker.on('error', (error) => {
-  console.error('[worker] ingestion worker error', error);
+  logger.error('[Worker] Ingestion worker error encountered', error);
 });
 
-console.log(
-  `[worker] ingestion worker started (env=${env.NODE_ENV || 'development'})`
+logger.info(
+  `[Worker] Ingestion worker started (env=${env.NODE_ENV || 'development'})`
 );
