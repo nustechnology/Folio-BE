@@ -5,12 +5,14 @@ import { auth } from '~/api/middlewares/auth.middleware';
 import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import { uploadSingleFile } from '~/api/middlewares/upload.middleware';
 import {
+  validateBody,
   validateParams,
   validateQuery
 } from '~/api/middlewares/validation.middleware';
 import {
   listSourcesQuerySchema,
-  sourceIdParamSchema
+  sourceIdParamSchema,
+  updateSourceSchema
 } from '~/api/routes/validators/source.validator';
 
 const router = Router();
@@ -31,6 +33,14 @@ router.get(
   auth,
   validateParams(sourceIdParamSchema),
   asyncHandler(SourceController.getById)
+);
+
+router.patch(
+  '/:sourceId',
+  auth,
+  validateParams(sourceIdParamSchema),
+  validateBody(updateSourceSchema),
+  asyncHandler(SourceController.update)
 );
 
 router.get(
