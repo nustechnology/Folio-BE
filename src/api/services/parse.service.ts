@@ -12,11 +12,18 @@ const stripTags = (xml: string): string => {
     .trim();
 };
 
+// Unzips the .xlsx file to parse its worksheets structurally. Resolves Excel shared strings,
+// matches worksheets from workbook.xml, maps cell coordinates to table rows, and returns
+// an array of sheets with headers and data rows.
 const parseXlsxSheets = async (
   buffer: Buffer
 ): Promise<{ name: string; headers: string[]; rows: string[][] }[]> => {
+  // Office OpenXML files (like .xlsx) are zipped collections of XML files.
+  // We load the buffer as a ZIP archive to read individual spreadsheet components.
   const zip = await JSZip.loadAsync(buffer);
 
+  // Excel stores a single copy of each unique string in xl/sharedStrings.xml to optimize file size.
+  // We extract and decode this file first to build a lookup array for actual cell values.
   const sharedStrings: string[] = [];
   const sharedStringsFile = zip.file('xl/sharedStrings.xml');
   if (sharedStringsFile) {
@@ -28,6 +35,7 @@ const parseXlsxSheets = async (
     }
   }
 
+  // xl/workbook.xml lists the sheets defined in the spreadsheet, including their user-facing names.
   const workbookFile = zip.file('xl/workbook.xml');
   const sheetNames: string[] = [];
   if (workbookFile) {
@@ -44,6 +52,8 @@ const parseXlsxSheets = async (
   }
 
   const sheets: { name: string; headers: string[]; rows: string[][] }[] = [];
+  // Scan for sheet files (e.g. xl/worksheets/sheet1.xml) and sort them numerically so sheets match
+  // the order parsed from workbook.xml.
   const sheetFiles = Object.keys(zip.files)
     .filter((name) => /xl\/worksheets\/sheet\d+\.xml$/.test(name))
     .sort((a, b) => {
@@ -60,12 +70,14 @@ const parseXlsxSheets = async (
     const rowsMap: Record<number, Record<string, string>> = {};
     const colLetters = new Set<string>();
 
-    // Permissive match for cells: support both normal and self-closing tags
+    // Each cell in a sheet is represented by a <c> tag.
+    // Permissive match for cells: support both normal and self-closing tags.
     const cMatches =
       xml.match(/<c\s+[^>]+>([\s\S]*?)<\/c>/gi) ||
       xml.match(/<c\s+[^>]+\/>/gi) ||
       [];
     for (const cMatch of cMatches) {
+      // Cell reference e.g. r="A1" maps to column "A", row "1"
       const rMatch =
         cMatch.match(/r="([A-Z]+)(\d+)"/i) ||
         cMatch.match(/r='([A-Z]+)(\d+)'/i);
@@ -73,10 +85,12 @@ const parseXlsxSheets = async (
       const col = rMatch[1].toUpperCase();
       const row = Number(rMatch[2]);
 
+      // t="s" indicates the cell's value is stored in sharedStrings.xml (shared string index).
       const tMatch =
         cMatch.match(/t="([^"]+)"/i) || cMatch.match(/t='([^']+)'/i);
       const isSharedString = tMatch && tMatch[1] === 's';
 
+      // <v> is the value tag containing either the raw number or the sharedStrings index.
       const vMatch = cMatch.match(/<v>([^<]+)<\/v>/i);
       let value = '';
       if (vMatch) {
@@ -96,11 +110,13 @@ const parseXlsxSheets = async (
       colLetters.add(col);
     }
 
+    // Sort column keys (A, B, ..., Z, AA, AB...) alphabetically and by character length
     const sortedCols = Array.from(colLetters).sort((a, b) => {
       if (a.length !== b.length) return a.length - b.length;
       return a.localeCompare(b);
     });
 
+    // Sort row indices numerically
     const rowNumbers = Object.keys(rowsMap)
       .map(Number)
       .sort((a, b) => a - b);
@@ -109,11 +125,13 @@ const parseXlsxSheets = async (
     const headers = sortedCols;
     const rows: string[][] = [];
 
+    // Construct flat row arrays based on the grid structure we built
     for (const rNum of rowNumbers) {
       const rowData = sortedCols.map((col) => rowsMap[rNum][col] || '');
       rows.push(rowData);
     }
 
+    // Identify headers: by default, we assume the first row represents column headers.
     let finalHeaders = headers;
     let finalRows = rows;
     if (rows.length > 0) {
@@ -131,10 +149,16 @@ const parseXlsxSheets = async (
   return sheets;
 };
 
+// Unzips the .pptx file, parses individual slide XML structures, and extracts text runs.
+// Identifies slide titles (using title placeholder definitions) and builds lists of bullet points.
 const parsePptxSlides = async (
   buffer: Buffer
 ): Promise<{ slideNumber: number; title: string; bullets: string[] }[]> => {
+  // Office OpenXML files (like .pptx) are zipped collections of XML files.
+  // We load the buffer as a ZIP archive to access individual slides.
   const zip = await JSZip.loadAsync(buffer);
+
+  // Find all slide XML files and sort them numerically so slide data remains ordered.
   const slideNames = Object.keys(zip.files)
     .filter((name) => /ppt\/slides\/slide\d+\.xml$/.test(name))
     .sort(
@@ -150,16 +174,19 @@ const parsePptxSlides = async (
     const name = slideNames[i];
     const xml = await zip.file(name)!.async('string');
 
+    // Slide text elements are defined inside shape elements (<p:sp>)
     const shapes = xml.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || [];
     let slideTitle = '';
     const bullets: string[] = [];
 
     for (const shape of shapes) {
+      // Determine if this shape represents a slide title placeholder
       const isTitle =
         shape.includes('type="title"') ||
         shape.includes('type="ctrTitle"') ||
         shape.includes('type="subTitle"');
 
+      // Extract paragraphs (<a:p>) and text runs (<a:t>) inside the shape
       const paragraphs = shape.match(/<a:p>[\s\S]*?<\/a:p>/g) || [];
       for (const para of paragraphs) {
         const textRuns = para.match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [];
@@ -169,6 +196,7 @@ const parsePptxSlides = async (
           .trim();
 
         if (paraText) {
+          // If shape is a title, assign as slide title, otherwise list as bullet/body text
           if (isTitle && !slideTitle) {
             slideTitle = paraText;
           } else {
@@ -271,6 +299,8 @@ const extractFromPptx = async (buffer: Buffer): Promise<string> => {
   return text.trim();
 };
 
+// Fast plain text fallback for XLSX files. Reads and strips tags from the sharedStrings XML file,
+// returning a single concatenated string of all cell values.
 const extractFromXlsx = async (buffer: Buffer): Promise<string> => {
   const zip = await JSZip.loadAsync(buffer);
   const shared = zip.file('xl/sharedStrings.xml');
@@ -285,6 +315,8 @@ const extractFromXlsx = async (buffer: Buffer): Promise<string> => {
   return cells.join('\n').trim();
 };
 
+// Unzips the EPUB archive, filters for XHTML/HTML files, and extracts both raw, tag-stripped
+// content and the raw HTML body content. Uses pLimit to process files with a concurrency limit.
 const extractFromEpub = async (
   buffer: Buffer
 ): Promise<{ content: string; html: string }> => {
@@ -323,6 +355,8 @@ const extractFromEpub = async (
 // Format-Specific Unified Parsers
 // ==========================================
 
+// Parses a PDF file, extracting text and wrapping each page's content inside an HTML div
+// that preserves page boundaries for browser rendering.
 const parsePdf = async (buffer: Buffer) => {
   const content = await extractFromPdf(buffer);
   const pagesHtml = content
@@ -346,6 +380,7 @@ const parsePdf = async (buffer: Buffer) => {
   };
 };
 
+// Parses a DOCX file into plain text (for embeddings) and document-type HTML structure.
 const parseDocx = async (buffer: Buffer) => {
   const res = await extractFromDocx(buffer);
   return {
@@ -357,6 +392,7 @@ const parseDocx = async (buffer: Buffer) => {
   };
 };
 
+// Parses a Markdown file into plain text (AST-based) and HTML (using the marked renderer).
 const parseMarkdownFile = async (buffer: Buffer) => {
   const res = await extractFromMarkdown(buffer);
   return {
@@ -368,6 +404,7 @@ const parseMarkdownFile = async (buffer: Buffer) => {
   };
 };
 
+// Parses a PPTX file, providing a tag-stripped text fallback along with structured slide JSON.
 const parsePptxFile = async (buffer: Buffer) => {
   const content = await extractFromPptx(buffer);
   const slides = await parsePptxSlides(buffer);
@@ -380,6 +417,7 @@ const parsePptxFile = async (buffer: Buffer) => {
   };
 };
 
+// Parses an XLSX file, returning tag-stripped text fallback and structured sheets JSON.
 const parseXlsxFile = async (buffer: Buffer) => {
   const content = await extractFromXlsx(buffer);
   const sheets = await parseXlsxSheets(buffer);
@@ -392,6 +430,7 @@ const parseXlsxFile = async (buffer: Buffer) => {
   };
 };
 
+// Parses an EPUB file into concatenated plain text and document HTML.
 const parseEpubFile = async (buffer: Buffer) => {
   const res = await extractFromEpub(buffer);
   return {
@@ -403,6 +442,7 @@ const parseEpubFile = async (buffer: Buffer) => {
   };
 };
 
+// Decodes a plain text file (TXT) and wraps its paragraphs into HTML <p> tags.
 const parseTxt = async (buffer: Buffer) => {
   const content = extractFromPlainText(buffer);
   const textHtml = content
@@ -418,6 +458,7 @@ const parseTxt = async (buffer: Buffer) => {
   };
 };
 
+// Parses a CSV file, splitting rows and columns to return sheet-like structured JSON data.
 const parseCsvFile = async (buffer: Buffer) => {
   const content = extractFromPlainText(buffer);
   const rows = content.split('\n').map((line) => line.split(','));
@@ -442,6 +483,8 @@ const parseCsvFile = async (buffer: Buffer) => {
   };
 };
 
+// Main unified parser function. Routes the binary buffer to the appropriate format parser
+// based on the file format string, and returns content (for embeddings) and structuredContent.
 const parse = async (
   format: string,
   buffer: Buffer
