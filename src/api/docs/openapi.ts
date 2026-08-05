@@ -381,7 +381,7 @@ export const openApiDocument = {
         tags: ['Notes'],
         summary: 'Create a note',
         description:
-          'Creates a user-created note in a space owned by the authenticated user. Rich-text content is sanitized to the formatting the editor supports (bold, italic, lists, links); the 20,000-character limit is measured against the plain-text projection of that content. An empty or whitespace-only title is stored as "Untitled Note".',
+          'Creates a user-created note in a space owned by the authenticated user. Rich-text content is sanitized to the formatting the editor supports (bold, italic, lists, links); the 20,000-character limit is measured against the plain-text projection of that content, while the raw HTML payload itself is capped at 200,000 characters. An empty or whitespace-only title is stored as "Untitled Note".',
         operationId: 'createNote',
         security: [
           {
@@ -1104,8 +1104,9 @@ export const openApiDocument = {
           },
           content: {
             type: 'string',
+            maxLength: 200000,
             description:
-              'Rich-text content (HTML). Sanitized on save; its plain-text projection must be 1-20,000 characters.',
+              'Rich-text content (HTML). Sanitized on save; its plain-text projection must be 1-20,000 characters and the raw HTML must not exceed 200,000 characters.',
             example: '<p>Scaling laws hold across <strong>three</strong> orders of magnitude.</p>'
           }
         }

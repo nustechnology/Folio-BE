@@ -5,6 +5,7 @@ import { ErrorCode } from '~/api/errors/error-codes';
 import { ListOptions } from '~/api/types/space';
 import { Prisma } from '~/generated/prisma/client';
 import prisma from '~/prisma/prisma.client';
+import { escapeLikePattern } from '~/prisma/repositories/search.util';
 
 type ListFilters = {
   ownerId: string;
@@ -28,9 +29,10 @@ const findManyByOwner = async (filters: ListFilters, options: ListOptions) => {
   };
 
   if (options.search) {
+    const search = escapeLikePattern(options.search);
     where.OR = [
-      { name: { contains: options.search, mode: 'insensitive' } },
-      { researchObjective: { contains: options.search, mode: 'insensitive' } }
+      { name: { contains: search, mode: 'insensitive' } },
+      { researchObjective: { contains: search, mode: 'insensitive' } }
     ];
   }
 

@@ -1,6 +1,7 @@
 import { ListNotesOptions } from '~/api/types/note';
 import { OriginType, Prisma } from '~/generated/prisma/client';
 import prisma from '~/prisma/prisma.client';
+import { escapeLikePattern } from '~/prisma/repositories/search.util';
 
 const citationCountInclude = {
   _count: { select: { citationReferences: true } }
@@ -32,9 +33,10 @@ const findManyBySpace = async (
    * note that has a paragraph or a link.
    */
   if (options.search) {
+    const search = escapeLikePattern(options.search);
     where.OR = [
-      { title: { contains: options.search, mode: 'insensitive' } },
-      { contentText: { contains: options.search, mode: 'insensitive' } }
+      { title: { contains: search, mode: 'insensitive' } },
+      { contentText: { contains: search, mode: 'insensitive' } }
     ];
   }
 

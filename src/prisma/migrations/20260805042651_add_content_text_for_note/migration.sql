@@ -31,9 +31,9 @@ CREATE INDEX "Source_originalNoteId_idx" ON "Source"("originalNoteId");
 -- entities are decoded with `&amp;` resolved last so `&amp;lt;` cannot decode
 -- twice into a tag.
 -- `btrim` would only strip spaces; the trailing block boundary is a newline, so
--- the two `regexp_replace` calls stand in for JavaScript's `String.trim`. The
--- `chr(160)` pass is part of that: sanitization leaves `&nbsp;` as a literal
--- no-break space, which JavaScript's `\s` trims but Postgres' does not.
+-- the two `regexp_replace` calls stand in for JavaScript's `String.trim`. They
+-- also match U+00A0, which JavaScript's trim treats as whitespace but Postgres'
+-- `\s` does not — interior no-break spaces are left alone, as in `toPlainText`.
 UPDATE "Note"
 SET "contentText" = regexp_replace(
   regexp_replace(
@@ -63,7 +63,7 @@ SET "contentText" = regexp_replace(
     ),
     '&amp;', '&'
   ),
-  chr(160), ' '),
-  '^\s+', ''),
-  '\s+$', ''
+  chr(13) || chr(10), chr(10)),
+  '^[\s\u00a0]+', ''),
+  '[\s\u00a0]+$', ''
 );
