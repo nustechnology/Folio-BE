@@ -2,14 +2,18 @@ import { StatusCodes } from 'http-status-codes';
 
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
-import { CreateNoteInput, ListNotesOptions } from '~/api/types/note';
+import {
+  CreateNoteInput,
+  ListNotesOptions,
+  UpdateNoteInput
+} from '~/api/types/note';
 import { NOTE } from '~/api/utils/constants';
 import {
   sanitizeRichText,
   toPlainText,
   toPreview
 } from '~/api/utils/rich-text.util';
-import { OriginType } from '~/generated/prisma/client';
+import { OriginType, Prisma } from '~/generated/prisma/client';
 import NoteRepository, {
   NoteRecord
 } from '~/prisma/repositories/note.repository';
@@ -56,6 +60,34 @@ const assertSpaceAccess = async (spaceId: string, ownerId: string) => {
   return space;
 };
 
+/**
+ * Sanitize submitted markup and measure the result. The length rules run
+ * against the sanitized plain text, not the payload, so a client cannot pad
+ * its way past them with tags that get stripped anyway.
+ */
+const prepareContent = (rawContent: string) => {
+  const content = sanitizeRichText(rawContent);
+  const contentText = toPlainText(content);
+
+  if (contentText.length < NOTE.CONTENT_MIN_LENGTH) {
+    throw new AppError(
+      'Content cannot be empty',
+      StatusCodes.BAD_REQUEST,
+      ErrorCode.NOTE_CONTENT_EMPTY
+    );
+  }
+
+  if (contentText.length > NOTE.CONTENT_MAX_LENGTH) {
+    throw new AppError(
+      `Content exceeds maximum length of ${NOTE.CONTENT_MAX_LENGTH.toLocaleString('en-US')} characters`,
+      StatusCodes.BAD_REQUEST,
+      ErrorCode.NOTE_CONTENT_TOO_LONG
+    );
+  }
+
+  return { content, contentText };
+};
+
 const list = async (
   ownerId: string,
   spaceId: string,
@@ -79,9 +111,7 @@ const list = async (
   };
 };
 
-const getById = async (ownerId: string, spaceId: string, noteId: string) => {
-  await assertSpaceAccess(spaceId, ownerId);
-
+const requireNoteInSpace = async (noteId: string, spaceId: string) => {
   const note = await NoteRepository.findByIdInSpace(noteId, spaceId);
   if (!note) {
     throw new AppError(
@@ -90,8 +120,13 @@ const getById = async (ownerId: string, spaceId: string, noteId: string) => {
       ErrorCode.NOTE_NOT_FOUND
     );
   }
+  return note;
+};
 
-  return toDetail(note);
+const getById = async (ownerId: string, spaceId: string, noteId: string) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  return toDetail(await requireNoteInSpace(noteId, spaceId));
 };
 
 const create = async (
@@ -101,38 +136,82 @@ const create = async (
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
 
-  const content = sanitizeRichText(input.content);
-  const plainText = toPlainText(content);
-
-  if (plainText.length < NOTE.CONTENT_MIN_LENGTH) {
-    throw new AppError(
-      'Content cannot be empty',
-      StatusCodes.BAD_REQUEST,
-      ErrorCode.NOTE_CONTENT_EMPTY
-    );
-  }
-
-  if (plainText.length > NOTE.CONTENT_MAX_LENGTH) {
-    throw new AppError(
-      `Content exceeds maximum length of ${NOTE.CONTENT_MAX_LENGTH.toLocaleString('en-US')} characters`,
-      StatusCodes.BAD_REQUEST,
-      ErrorCode.NOTE_CONTENT_TOO_LONG
-    );
-  }
+  const { content, contentText } = prepareContent(input.content);
 
   const note = await NoteRepository.create({
     researchSpaceId: spaceId,
     title: input.title?.trim() || NOTE.DEFAULT_TITLE,
     content,
-    contentText: plainText,
+    contentText,
     originType: OriginType.UserCreated
   });
 
   return toDetail(note);
 };
 
+/**
+ * A note that vanished between being addressed and being written is reported as
+ * missing, not as a server fault. Without this, two tabs deleting the same note
+ * — or a double-click on Delete — answers `500` for the loser: `P2025` is what
+ * Prisma raises when the space-scoped `where` matches nothing, and it is exactly
+ * the "not found" this API already has a code for.
+ */
+const asNoteNotFound = (error: unknown): never => {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2025'
+  ) {
+    throw new AppError(
+      'Note not found.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.NOTE_NOT_FOUND
+    );
+  }
+  throw error;
+};
+
+/**
+ * No pre-flight existence check: the repository write is scoped to the space, so
+ * the write is the boundary. A check beforehand could only go stale between the
+ * read and the write, which is the race that turned into a `500`.
+ */
+const update = async (
+  ownerId: string,
+  spaceId: string,
+  noteId: string,
+  input: UpdateNoteInput
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const data: { title?: string; content?: string; contentText?: string } = {};
+
+  if (input.title !== undefined) {
+    data.title = input.title.trim();
+  }
+
+  if (input.content !== undefined) {
+    const { content, contentText } = prepareContent(input.content);
+    data.content = content;
+    data.contentText = contentText;
+  }
+
+  const note = await NoteRepository.update(noteId, spaceId, data).catch(
+    asNoteNotFound
+  );
+
+  return toDetail(note);
+};
+
+const remove = async (ownerId: string, spaceId: string, noteId: string) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  await NoteRepository.remove(noteId, spaceId).catch(asNoteNotFound);
+};
+
 export default {
   list,
   getById,
-  create
+  create,
+  update,
+  remove
 };
