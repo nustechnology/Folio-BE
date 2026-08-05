@@ -45,10 +45,11 @@ export const runOcrOnPdf = async (
     const prompt =
       'Extract all text from this PDF document. ' +
       'Preserve the original reading order and formatting as best you can. ' +
+      'If you find any tables, format them using markdown table syntax. ' +
       'Begin each page\'s content with a marker in the exact format "[page N]" ' +
       '(where N is the page number, starting at 1), followed by a newline. ' +
       'Separate pages with a blank line. ' +
-      'Output plain text only — no markdown, no commentary.';
+      'Do not wrap the entire output in markdown code blocks, and do not add any conversational commentary.';
 
     const result = await model.generateContent([
       {
