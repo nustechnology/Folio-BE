@@ -41,7 +41,54 @@ const create = async (
   });
 };
 
+const update = async (
+  ownerId: string,
+  id: string,
+  data: { name?: string; researchObjective?: string }
+) => {
+  const existing = await SpaceRepository.findByIdAndOwner(id, ownerId);
+  if (!existing) {
+    throw new AppError(
+      'Space not found.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SPACE_NOT_FOUND
+    );
+  }
+
+  if (data.name !== undefined) {
+    const duplicate = await SpaceRepository.findByNameAndOwnerExcluding(
+      data.name,
+      ownerId,
+      id
+    );
+    if (duplicate) {
+      throw new AppError(
+        'A space with this name already exists.',
+        StatusCodes.CONFLICT,
+        ErrorCode.SPACE_NAME_EXISTS
+      );
+    }
+  }
+
+  return SpaceRepository.update(id, data);
+};
+
+const remove = async (ownerId: string, id: string) => {
+  const existing = await SpaceRepository.findByIdAndOwner(id, ownerId);
+  if (!existing) {
+    throw new AppError(
+      'Space not found.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SPACE_NOT_FOUND
+    );
+  }
+
+  return SpaceRepository.remove(id);
+};
+
 export default {
   list,
-  create
+  create,
+  update,
+  remove
 };
