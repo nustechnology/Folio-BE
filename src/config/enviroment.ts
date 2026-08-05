@@ -35,6 +35,8 @@ interface EnvInterface {
   CHUNK_BREAKPOINT_PERCENTILE: string;
   CHUNK_EMBED_BATCH_SIZE: string;
   CHUNK_STRATEGY_VERSION: string;
+  GEMINI_API_KEY: string;
+  OCR_CHARS_PER_PAGE_THRESHOLD: string;
 }
 
 const nodeEnv = process.env.NODE_ENV || '';
@@ -77,7 +79,9 @@ export const env: EnvInterface = {
   CHUNK_BREAKPOINT_PERCENTILE: process.env.CHUNK_BREAKPOINT_PERCENTILE || '90',
   CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '64',
   CHUNK_STRATEGY_VERSION:
-    process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1'
+    process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  OCR_CHARS_PER_PAGE_THRESHOLD: process.env.OCR_CHARS_PER_PAGE_THRESHOLD || '50'
 };
 
 const missing = [
