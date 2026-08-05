@@ -1,3 +1,5 @@
+import http from 'node:http';
+import https from 'node:https';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
@@ -273,7 +275,18 @@ const isBlockedIp = (ip: string): boolean => {
 // could still flip its DNS answer afterwards (DNS rebinding); pinning the
 // connection to the validated IP is the fully robust defence and is out of
 // scope for this minimal fix.
-const assertSafeUrl = async (rawUrl: string): Promise<void> => {
+type ResolvedHost = {
+  hostname: string;
+  ip: string;
+  family: number;
+};
+
+// Resolve and validate a URL's host, returning the exact IP the connection must
+// be pinned to. The address is resolved HERE and then forced at connect time
+// (via a lookup override), so a hostile hostname cannot flip its DNS answer
+// between validation and connection (DNS rebinding) to route the request to a
+// private address.
+const resolveAndValidate = async (rawUrl: string): Promise<ResolvedHost> => {
   const parsed = new URL(rawUrl);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('Only http(s) URLs are allowed.');
@@ -288,23 +301,27 @@ const assertSafeUrl = async (rawUrl: string): Promise<void> => {
     if (isBlockedIp(hostname)) {
       throw new Error(`Blocked destination: ${hostname}`);
     }
-    return;
+    return { hostname, ip: hostname, family: isIP(hostname) };
   }
 
-  let addresses: string[];
+  let addresses: { address: string; family: number }[];
   try {
-    addresses = (await lookup(hostname, { all: true, verbatim: true })).map(
-      (record) => record.address
-    );
+    addresses = await lookup(hostname, { all: true, verbatim: true });
   } catch {
     throw new Error(`Failed to resolve host: ${hostname}`);
   }
 
-  if (addresses.length === 0 || addresses.some(isBlockedIp)) {
+  if (addresses.length === 0 || addresses.some((a) => isBlockedIp(a.address))) {
     throw new Error(
       `Destination resolves to a blocked (private/loopback/link-local) address: ${hostname}`
     );
   }
+
+  return {
+    hostname,
+    ip: addresses[0].address,
+    family: addresses[0].family
+  };
 };
 
 // Read a fetch response body into a Buffer, hard-capping it so a huge page
@@ -312,89 +329,115 @@ const assertSafeUrl = async (rawUrl: string): Promise<void> => {
 // over the limit is rejected up front; streamed/chunked bodies are capped as
 // they arrive.
 const readBodyWithLimit = async (
-  response: Response,
+  response: http.IncomingMessage,
   maxBytes: number
 ): Promise<Buffer> => {
-  const declared = Number(response.headers.get('content-length'));
+  const declared = Number(response.headers['content-length']);
   if (Number.isFinite(declared) && declared > maxBytes) {
-    await response.body?.cancel().catch(() => {});
+    response.destroy(); // close the socket immediately (no keep-alive reuse)
     throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
   }
 
-  if (!response.body) {
-    return Buffer.alloc(0);
-  }
-
-  const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
-      }
-      chunks.push(Buffer.from(value));
+  for await (const chunk of response) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > maxBytes) {
+      response.destroy();
+      throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
     }
-  } finally {
-    reader.releaseLock();
+    chunks.push(buf);
   }
   return Buffer.concat(chunks);
 };
 
+// Perform a single HTTP(S) hop pinned to a pre-validated IP. The `lookup`
+// override forces the socket to connect to `resolved.ip` for the expected
+// hostname, so DNS cannot be re-resolved to a private address at connect time
+// (DNS rebinding). The request keeps the real hostname for the Host header and
+// TLS SNI, so virtual hosting and certificate validation still work. Aborts the
+// hop if it exceeds WEB_FETCH_TIMEOUT_MS.
+const fetchHop = async (url: string): Promise<http.IncomingMessage> => {
+  const parsed = new URL(url);
+  const { hostname, ip, family } = await resolveAndValidate(url);
+  const transport = parsed.protocol === 'https:' ? https : http;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+
+  try {
+    return await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const request = transport.request(
+        {
+          hostname,
+          port: parsed.port ? Number(parsed.port) : undefined,
+          path: `${parsed.pathname}${parsed.search}`,
+          method: 'GET',
+          servername: hostname,
+          // No connection pooling: each hop gets a fresh socket that closes
+          // once its response is consumed, so no lingering keep-alive sockets.
+          agent: false,
+          headers: { 'User-Agent': 'Folio-RAG/1.0' },
+          lookup: (
+            lookupHost: string,
+            _opts: unknown,
+            cb: (
+              err: Error | null,
+              addresses?: { address: string; family: number }[]
+            ) => void
+          ) => {
+            if (lookupHost.toLowerCase() !== hostname) {
+              cb(new Error('Unexpected hostname during lookup.'));
+              return;
+            }
+            cb(null, [{ address: ip, family }]);
+          }
+        },
+        (res) => resolve(res)
+      );
+      controller.signal.addEventListener('abort', () =>
+        request.destroy(new Error('timed out'))
+      );
+      request.on('error', reject);
+      request.end();
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request to ${url} timed out.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 // Fetch with manual redirect handling: every hop (the initial URL and each
-// Location target) passes assertSafeUrl before a request is sent, redirects are
-// bounded to prevent loops, and each hop is aborted if it exceeds
+// Location target) is resolved + validated and its connection pinned, redirects
+// are bounded to prevent loops, and each hop is aborted if it exceeds
 // WEB_FETCH_TIMEOUT_MS. Redirect bodies are drained with a size cap. Returns
-// the first non-3xx response, so the caller keeps the existing
-// `response.ok` / body parsing.
-const fetchApproved = async (urlString: string): Promise<Response> => {
+// the first non-3xx response.
+const fetchApproved = async (
+  urlString: string
+): Promise<http.IncomingMessage> => {
   let current = urlString;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    await assertSafeUrl(current);
+    const response = await fetchHop(current);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
-    try {
-      const response = await fetch(current, {
-        redirect: 'manual',
-        headers: { 'User-Agent': 'Folio-RAG/1.0' },
-        signal: controller.signal
-      });
-
-      if (
-        response.status >= 300 &&
-        response.status < 400 &&
-        response.headers.has('location')
-      ) {
-        const next = new URL(
-          response.headers.get('location')!,
-          current
-        ).toString();
-        // Drain (capped) + release the socket for the redirect body.
-        await readBodyWithLimit(response, MAX_WEB_BODY_BYTES).catch(() => {});
-        if (next === current) {
-          throw new Error('Redirect loop detected.');
-        }
-        current = next;
-        continue;
+    const status = response.statusCode ?? 0;
+    if (status >= 300 && status < 400 && response.headers.location) {
+      const next = new URL(response.headers.location, current).toString();
+      // Drain (capped) + release the socket for the redirect body.
+      await readBodyWithLimit(response, MAX_WEB_BODY_BYTES).catch(() => {});
+      if (next === current) {
+        throw new Error('Redirect loop detected.');
       }
-
-      return response;
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error(`Request to ${current} timed out.`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
+      current = next;
+      continue;
     }
+
+    return response;
   }
 
   throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
@@ -411,8 +454,11 @@ const extractFromWeb = async (
   // strip navigation/ads and keep only the main article text. Also extracts the
   // page <title> and <meta name="author"> so they can fill blank source fields.
   const response = await fetchApproved(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch URL: ${response.status}`);
+  const status = response.statusCode ?? 0;
+  if (status < 200 || status >= 300) {
+    // Drain (capped) the error body so the socket is released back to the pool.
+    await readBodyWithLimit(response, MAX_WEB_BODY_BYTES).catch(() => {});
+    throw new Error(`Failed to fetch URL: ${status}`);
   }
   const html = (await readBodyWithLimit(response, MAX_WEB_BODY_BYTES)).toString(
     'utf8'
