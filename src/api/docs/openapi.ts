@@ -376,6 +376,59 @@ export const openApiDocument = {
       }
     },
     '/api/v1/spaces/{id}': {
+      get: {
+        tags: ['Spaces'],
+        summary: 'Get a research space',
+        description:
+          'Retrieves the details of a research space owned by the authenticated user.',
+        operationId: 'getSpace',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            description: 'Space ID',
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Space details retrieved successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/GetSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found or not owned by the user (code: SPACE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
       patch: {
         tags: ['Spaces'],
         summary: 'Update a research space',
@@ -1223,6 +1276,25 @@ export const openApiDocument = {
         }
       },
       CreateSpaceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['space'],
+            properties: {
+              space: {
+                $ref: '#/components/schemas/Space'
+              }
+            }
+          }
+        }
+      },
+      GetSpaceSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
         properties: {
