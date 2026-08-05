@@ -1,3 +1,6 @@
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
 import { JSDOM } from 'jsdom';
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
@@ -131,6 +134,174 @@ const extractFromEpub = async (buffer: Buffer): Promise<string> => {
   return parts.filter(Boolean).join('\n').trim();
 };
 
+// ---------------------------------------------------------------------------
+// SSRF protection for web extraction.
+//
+// `sourceUrl` is user-controlled, so we must never let fetch() reach an
+// internal address (loopback, link-local, cloud metadata, private ranges) —
+// either directly or via a redirect. The API boundary validates the scheme
+// (http/https) but not the destination, and automatic redirect following would
+// happily hop from a public URL onto an internal one.
+// ---------------------------------------------------------------------------
+
+const MAX_REDIRECTS = 5;
+
+// IP ranges an ingestion worker must never connect to (loopback, private,
+// link-local incl. cloud metadata, and other non-routable/reserved ranges).
+// net.BlockList rejects IPv6 on this Node version, so ranges are matched
+// manually below.
+const ipv4ToBigInt = (ip: string): bigint => {
+  const [a, b, c, d] = ip.split('.').map(Number);
+  return (
+    (BigInt(a) << BigInt(24)) |
+    (BigInt(b) << BigInt(16)) |
+    (BigInt(c) << BigInt(8)) |
+    BigInt(d)
+  );
+};
+
+const ipv6ToBigInt = (ip: string): bigint => {
+  const doubleColon = ip.indexOf('::');
+  const left = doubleColon === -1 ? ip : ip.slice(0, doubleColon);
+  const right = doubleColon === -1 ? '' : ip.slice(doubleColon + 2);
+  const leftParts = left ? left.split(':').filter(Boolean) : [];
+  const rightParts = right ? right.split(':').filter(Boolean) : [];
+  const missing = 8 - leftParts.length - rightParts.length;
+  const hextets = [...leftParts, ...Array(missing).fill('0'), ...rightParts];
+  let value = BigInt(0);
+  for (const h of hextets) {
+    value = (value << BigInt(16)) | BigInt(parseInt(h || '0', 16));
+  }
+  return value;
+};
+
+type IpRange = { network: bigint; bits: number; family: 4 | 6 };
+
+const blockedRanges: IpRange[] = [
+  { network: ipv4ToBigInt('0.0.0.0'), bits: 8, family: 4 }, // "this" network
+  { network: ipv4ToBigInt('10.0.0.0'), bits: 8, family: 4 }, // private
+  { network: ipv4ToBigInt('100.64.0.0'), bits: 10, family: 4 }, // carrier-grade NAT
+  { network: ipv4ToBigInt('127.0.0.0'), bits: 8, family: 4 }, // loopback
+  { network: ipv4ToBigInt('169.254.0.0'), bits: 16, family: 4 }, // link-local (metadata)
+  { network: ipv4ToBigInt('172.16.0.0'), bits: 12, family: 4 }, // private
+  { network: ipv4ToBigInt('192.168.0.0'), bits: 16, family: 4 }, // private
+  { network: ipv4ToBigInt('198.18.0.0'), bits: 15, family: 4 }, // benchmarking
+  { network: ipv4ToBigInt('224.0.0.0'), bits: 4, family: 4 }, // multicast
+  { network: ipv4ToBigInt('240.0.0.0'), bits: 4, family: 4 }, // reserved
+  { network: ipv6ToBigInt('::'), bits: 128, family: 6 }, // unspecified
+  { network: ipv6ToBigInt('::1'), bits: 128, family: 6 }, // loopback
+  { network: ipv6ToBigInt('fc00::'), bits: 7, family: 6 }, // unique local addresses
+  { network: ipv6ToBigInt('fe80::'), bits: 10, family: 6 }, // link-local
+  { network: ipv6ToBigInt('2001:db8::'), bits: 32, family: 6 }, // documentation
+  { network: ipv6ToBigInt('100::'), bits: 64, family: 6 } // discard-only
+];
+
+// Normalize IPv4-mapped IPv6 (::ffff:a.b.c.d) so the embedded IPv4 is checked.
+const normalizeIp = (ip: string): string => {
+  const lower = ip.toLowerCase();
+  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  return mapped ? mapped[1] : lower;
+};
+
+const isBlockedIp = (ip: string): boolean => {
+  const normalized = normalizeIp(ip);
+  const family = isIP(normalized);
+  if (!family) {
+    return false;
+  }
+  const maxBits = family === 4 ? 32 : 128;
+  const value =
+    family === 4 ? ipv4ToBigInt(normalized) : ipv6ToBigInt(normalized);
+  return blockedRanges.some((range) => {
+    if (range.family !== family) {
+      return false;
+    }
+    const mask =
+      range.bits === 0
+        ? BigInt(0)
+        : ((BigInt(1) << BigInt(range.bits)) - BigInt(1)) <<
+          BigInt(maxBits - range.bits);
+    return (value & mask) === (range.network & mask);
+  });
+};
+
+// Reject a URL whose scheme isn't http(s) or whose host resolves to any blocked
+// (internal) address. The lookup happens before fetch(), so a hostile hostname
+// could still flip its DNS answer afterwards (DNS rebinding); pinning the
+// connection to the validated IP is the fully robust defence and is out of
+// scope for this minimal fix.
+const assertSafeUrl = async (rawUrl: string): Promise<void> => {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Only http(s) URLs are allowed.');
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!hostname) {
+    throw new Error('URL is missing a host.');
+  }
+
+  if (isIP(hostname)) {
+    if (isBlockedIp(hostname)) {
+      throw new Error(`Blocked destination: ${hostname}`);
+    }
+    return;
+  }
+
+  let addresses: string[];
+  try {
+    addresses = (await lookup(hostname, { all: true, verbatim: true })).map(
+      (record) => record.address
+    );
+  } catch {
+    throw new Error(`Failed to resolve host: ${hostname}`);
+  }
+
+  if (addresses.length === 0 || addresses.some(isBlockedIp)) {
+    throw new Error(
+      `Destination resolves to a blocked (private/loopback/link-local) address: ${hostname}`
+    );
+  }
+};
+
+// Fetch with manual redirect handling: every hop (the initial URL and each
+// Location target) passes assertSafeUrl before a request is sent, and redirects
+// are bounded to prevent loops. Returns the first non-3xx response, so the
+// caller keeps the existing `response.ok` / `response.text()` parsing.
+const fetchApproved = async (urlString: string): Promise<Response> => {
+  let current = urlString;
+
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    await assertSafeUrl(current);
+
+    const response = await fetch(current, {
+      redirect: 'manual',
+      headers: { 'User-Agent': 'Folio-RAG/1.0' }
+    });
+
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      response.headers.has('location')
+    ) {
+      const next = new URL(
+        response.headers.get('location')!,
+        current
+      ).toString();
+      await response.arrayBuffer().catch(() => {}); // drain + release the socket
+      if (next === current) {
+        throw new Error('Redirect loop detected.');
+      }
+      current = next;
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
+};
+
 const extractFromWeb = async (
   url: string
 ): Promise<{
@@ -141,10 +312,7 @@ const extractFromWeb = async (
   // Fetch the article, render it with jsdom, then run Mozilla's Readability to
   // strip navigation/ads and keep only the main article text. Also extracts the
   // page <title> and <meta name="author"> so they can fill blank source fields.
-  const response = await fetch(url, {
-    redirect: 'follow',
-    headers: { 'User-Agent': 'Folio-RAG/1.0' }
-  });
+  const response = await fetchApproved(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch URL: ${response.status}`);
   }

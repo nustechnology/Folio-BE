@@ -47,6 +47,13 @@ const splitBlock = async (block: Block): Promise<string[]> => {
 // sending one enormous request to the model provider.
 const embedBatches = async (texts: string[]): Promise<number[][]> => {
   const batchSize = Number(env.CHUNK_EMBED_BATCH_SIZE);
+  if (!Number.isInteger(batchSize) || batchSize <= 0) {
+    throw new Error(
+      `CHUNK_EMBED_BATCH_SIZE must be a positive integer, received: ${String(
+        env.CHUNK_EMBED_BATCH_SIZE
+      )}`
+    );
+  }
   const results: number[][] = [];
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
@@ -165,6 +172,8 @@ export const chunkAndEmbed = async (
   sourceId: string
 ): Promise<void> => {
   if (blocks.length === 0) {
+    // No blocks → no passages; clear any stale rows from a previous run.
+    await PassageRepository.replaceBySourceId(sourceId, []);
     return;
   }
 
@@ -185,6 +194,7 @@ export const chunkAndEmbed = async (
   }
 
   if (units.length === 0) {
+    await PassageRepository.replaceBySourceId(sourceId, []);
     return;
   }
 
@@ -195,14 +205,15 @@ export const chunkAndEmbed = async (
   // Stage 7-8 — assemble passages with locator metadata.
   const passages = assemblePassages(units, breakpoints);
 
-  if (passages.length === 0) {
-    return;
-  }
-
-  // Stage 9 — embed the assembled passages (pass 2) and store them.
+  // Stage 9 — embed the assembled passages (pass 2).
   const passageEmbeddings = await embedBatches(passages.map((p) => p.content));
 
-  await PassageRepository.createMany(
+  // Replace the source's passages transactionally: rows from a previous run are
+  // deleted before inserting, so re-ingesting (retry) never leaves stale or
+  // duplicated passages. This runs even for zero passages, which clears the
+  // source entirely.
+  await PassageRepository.replaceBySourceId(
+    sourceId,
     passages.map((p, i) => ({
       sourceId,
       content: p.content,
