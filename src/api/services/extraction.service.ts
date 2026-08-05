@@ -343,24 +343,24 @@ const readBodyWithLimit = async (
 
   const chunks: Buffer[] = [];
   let total = 0;
-  try {
-    for await (const chunk of response) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      total += buf.length;
-      if (total > maxBytes) {
-        response.destroy();
-        throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
-      }
-      chunks.push(buf);
+
+  for await (const chunk of response) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > maxBytes) {
+      response.destroy();
+      throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
     }
-  } finally {
-    // The deadline can abort the request mid-body (socket torn down → the
-    // stream just ends early); surface that as a timeout rather than parsing a
-    // truncated page as if it succeeded.
-    if (signal?.aborted) {
-      throw new Error(timeoutMessage);
-    }
+    chunks.push(buf);
   }
+
+  // The deadline can abort the request mid-body (socket torn down → the
+  // stream just ends early); surface that as a timeout rather than parsing a
+  // truncated page as if it succeeded.
+  if (signal?.aborted) {
+    throw new Error(timeoutMessage);
+  }
+
   return Buffer.concat(chunks);
 };
 
