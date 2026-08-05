@@ -13,8 +13,11 @@ export const ingestionQueue = new Queue(INGESTION_QUEUE_NAME, {
 
 // Enqueue an ingestion job for a source. The deterministic `jobId` makes the
 // job idempotent: a duplicate `ingest-<sourceId>` job still waiting is ignored.
-// Failed jobs retry up to 3 times with exponential backoff; completed jobs are
-// removed so a later retry (via POST /sources/:id/retry) can enqueue again.
+// Failed jobs retry up to 3 times with exponential backoff. Both completed AND
+// failed jobs are removed afterwards, so a later retry (via
+// POST /sources/:id/retry) can enqueue the same `jobId` again — BullMQ skips
+// adding a job whose `jobId` already exists, so a retained failed job would
+// silently block reprocessing.
 export const enqueueIngestion = async (sourceId: string): Promise<void> => {
   await ingestionQueue.add(
     'ingest-source',
@@ -22,7 +25,7 @@ export const enqueueIngestion = async (sourceId: string): Promise<void> => {
     {
       jobId: `ingest-${sourceId}`,
       removeOnComplete: true,
-      removeOnFail: false,
+      removeOnFail: true,
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 }
     }

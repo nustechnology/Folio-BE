@@ -9,24 +9,27 @@ export type NewPassage = {
   locator: unknown;
 };
 
-// Insert a batch of passages. Uses raw SQL because Prisma cannot write the
-// `Unsupported("vector(1536)")` column via the normal client API — the embedding
-// array is serialized to Postgres's vector literal (`'[...]'::vector`). All
-// inserts run in one transaction so a failure leaves no partial passages.
-const createMany = async (passages: NewPassage[]): Promise<void> => {
-  if (passages.length === 0) {
-    return;
-  }
-
-  await prisma.$transaction(
-    passages.map(
+// Replace a source's passages atomically: delete every existing row for the
+// source, then insert the supplied passages — all in one transaction. Also
+// handles the zero-passages case (a re-ingested source that now yields no
+// passages still gets its stale rows removed). Uses raw SQL because Prisma
+// cannot write the `Unsupported("vector(768)")` embedding column via the normal
+// client API — each vector is serialized as a Postgres literal
+// (`'[...]'::vector`).
+const replaceBySourceId = async (
+  sourceId: string,
+  passages: NewPassage[]
+): Promise<void> => {
+  await prisma.$transaction([
+    prisma.$executeRaw`DELETE FROM "Passage" WHERE "sourceId" = ${sourceId}`,
+    ...passages.map(
       (p) =>
         prisma.$executeRaw`
         INSERT INTO "Passage" ("id", "sourceId", "content", "embedding", "tokenCount", "strategyVersion", "locator")
         VALUES (gen_random_uuid(), ${p.sourceId}, ${p.content}, ${JSON.stringify(p.embedding)}::vector, ${p.tokenCount}, ${p.strategyVersion}, ${JSON.stringify(p.locator)}::jsonb)
       `
     )
-  );
+  ]);
 };
 
 // Delete all passages of a source. Note: the Source FK has ON DELETE CASCADE,
@@ -36,6 +39,6 @@ const deleteBySourceId = async (sourceId: string): Promise<void> => {
 };
 
 export default {
-  createMany,
+  replaceBySourceId,
   deleteBySourceId
 };
