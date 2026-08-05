@@ -38,7 +38,21 @@ const deleteBySourceId = async (sourceId: string): Promise<void> => {
   await prisma.passage.deleteMany({ where: { sourceId } });
 };
 
+const findByIdAndSourceId = async (id: string, sourceId: string) => {
+  return prisma.passage.findFirst({
+    where: { id, sourceId }
+  });
+};
+
+const findById = async (id: string) => {
+  return prisma.passage.findUnique({
+    where: { id }
+  });
+};
+
 export default {
   replaceBySourceId,
-  deleteBySourceId
+  deleteBySourceId,
+  findByIdAndSourceId,
+  findById
 };
