@@ -375,6 +375,146 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/spaces/{id}': {
+      patch: {
+        tags: ['Spaces'],
+        summary: 'Update a research space',
+        description:
+          'Updates the name and/or research objective of a research space owned by the authenticated user. At least one field is required.',
+        operationId: 'updateSpace',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            description: 'Space ID',
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/UpdateSpaceRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Space updated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/UpdateSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error (no fields, empty name, name > 100 chars, objective > 500 chars)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found or not owned by the user (code: SPACE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '409': {
+            description:
+              'A space with this name already exists (code: SPACE_NAME_EXISTS)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
+      delete: {
+        tags: ['Spaces'],
+        summary: 'Delete a research space',
+        description:
+          'Permanently deletes a research space and all of its sources, notes, conversations, notebook, and citations.',
+        operationId: 'deleteSpace',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            description: 'Space ID',
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Space deleted successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/DeleteSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found or not owned by the user (code: SPACE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
     '/api/v1/sources': {
       post: {
         tags: ['Sources'],
@@ -1101,6 +1241,65 @@ export const openApiDocument = {
           }
         }
       },
+      UpdateSpaceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        minProperties: 1,
+        properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 100,
+            description: 'Space name (1-100 characters, trimmed)',
+            example: 'AI Ethics Research'
+          },
+          researchObjective: {
+            type: 'string',
+            maxLength: 500,
+            description: 'Research objective (max 500 characters)',
+            example: 'Explore ethical frameworks for AI decision-making.'
+          }
+        }
+      },
+      UpdateSpaceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['space'],
+            properties: {
+              space: {
+                $ref: '#/components/schemas/Space'
+              }
+            }
+          }
+        }
+      },
+      DeleteSpaceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['success'],
+            properties: {
+              success: {
+                type: 'boolean',
+                enum: [true]
+              }
+            }
+          }
+        }
+      },
       ListSpacesSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -1434,6 +1633,8 @@ export const openApiDocument = {
               'TOKEN_REVOKED',
               'INVALID_CREDENTIALS',
               'EMAIL_EXISTS',
+              'SPACE_NAME_EXISTS',
+              'SPACE_NOT_FOUND',
               'INTERNAL_ERROR'
             ],
             nullable: true
