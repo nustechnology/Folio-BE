@@ -9,6 +9,7 @@ import redis from '~/config/redis';
 import { INGESTION_QUEUE_NAME } from '~/queues/ingestion.queue';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import logger from '~/config/logger';
+import { OcrError } from '~/api/services/ocr.service';
 
 // Ingestion worker: runs as a SEPARATE process (`yarn dev:worker`).
 // It consumes `ingestion` jobs enqueued by the API server (source.service) and
@@ -55,12 +56,48 @@ const worker = new Worker(
 
     // Extract raw text based on the source type (PDF/DOCX/MD/Web/Manual).
     // This may download the file from MinIO (file sources) or fetch a URL (web).
-    const result = await extract({
-      sourceType: source.sourceType,
-      sourceUrl: source.sourceUrl,
-      content: source.content,
-      fileType: source.fileType
-    });
+    let result;
+    try {
+      result = await extract({
+        sourceType: source.sourceType,
+        sourceUrl: source.sourceUrl,
+        content: source.content,
+        fileType: source.fileType
+      });
+    } catch (error: any) {
+      if (error instanceof OcrError || error.name === 'OcrError') {
+        logger.error(
+          '[Worker] OCR process failed. Discarding job immediately.',
+          {
+            sourceId,
+            error: error.message
+          }
+        );
+        await SourceRepository.update(sourceId, {
+          processingState: 'failed',
+          processingError: error.message
+        }).catch((err) => {
+          logger.error(
+            '[Worker] Failed to update source error state during OCR failure',
+            {
+              sourceId,
+              err
+            }
+          );
+        });
+        await publishStatus(sourceId, 'failed', error.message).catch((err) => {
+          logger.error(
+            '[Worker] Failed to publish OCR failure status via SSE',
+            {
+              sourceId,
+              err
+            }
+          );
+        });
+        job.discard();
+      }
+      throw error;
+    }
 
     logger.info('[Worker] Text extraction completed successfully', {
       sourceId,
