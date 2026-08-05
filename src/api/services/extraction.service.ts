@@ -145,6 +145,11 @@ const extractFromEpub = async (buffer: Buffer): Promise<string> => {
 // ---------------------------------------------------------------------------
 
 const MAX_REDIRECTS = 5;
+// Per-hop timeout so a slow or hanging destination cannot stall the worker.
+const WEB_FETCH_TIMEOUT_MS = 15000;
+// Hard cap on a fetched HTML body, before it is parsed, so a huge page cannot
+// exhaust worker memory.
+const MAX_WEB_BODY_BYTES = 5 * 1024 * 1024; // 5 MB
 
 // IP ranges an ingestion worker must never connect to (loopback, private,
 // link-local incl. cloud metadata, and other non-routable/reserved ranges).
@@ -160,12 +165,34 @@ const ipv4ToBigInt = (ip: string): bigint => {
   );
 };
 
+// Parse an IPv6 address into a 128-bit value. Handles `::` compression and an
+// embedded dotted-quad IPv4 group (e.g. ::ffff:127.0.0.1), which counts as the
+// final two hextets.
 const ipv6ToBigInt = (ip: string): bigint => {
   const doubleColon = ip.indexOf('::');
   const left = doubleColon === -1 ? ip : ip.slice(0, doubleColon);
   const right = doubleColon === -1 ? '' : ip.slice(doubleColon + 2);
-  const leftParts = left ? left.split(':').filter(Boolean) : [];
-  const rightParts = right ? right.split(':').filter(Boolean) : [];
+
+  const expandDottedQuad = (parts: string[]): string[] => {
+    const hextets: string[] = [];
+    for (const part of parts) {
+      if (part.includes('.')) {
+        const [a, b, c, d] = part.split('.').map(Number);
+        hextets.push(((a << 8) | b).toString(16));
+        hextets.push(((c << 8) | d).toString(16));
+      } else {
+        hextets.push(part);
+      }
+    }
+    return hextets;
+  };
+
+  const leftParts = expandDottedQuad(
+    left ? left.split(':').filter(Boolean) : []
+  );
+  const rightParts = expandDottedQuad(
+    right ? right.split(':').filter(Boolean) : []
+  );
   const missing = 8 - leftParts.length - rightParts.length;
   const hextets = [...leftParts, ...Array(missing).fill('0'), ...rightParts];
   let value = BigInt(0);
@@ -196,11 +223,27 @@ const blockedRanges: IpRange[] = [
   { network: ipv6ToBigInt('100::'), bits: 64, family: 6 } // discard-only
 ];
 
-// Normalize IPv4-mapped IPv6 (::ffff:a.b.c.d) so the embedded IPv4 is checked.
+// Reduce IPv4-mapped IPv6 (::ffff:0:0/96) to the embedded IPv4 dotted quad so
+// the IPv4 blocked-range checks apply. This catches every representation —
+// dotted quad (::ffff:127.0.0.1), canonical hex (::ffff:7f00:1), and full
+// (0:0:0:0:0:ffff:7f00:1) — which a dotted-quad-only regex would miss. Other
+// addresses are returned unchanged.
 const normalizeIp = (ip: string): string => {
   const lower = ip.toLowerCase();
-  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  return mapped ? mapped[1] : lower;
+  if (isIP(lower) !== 6) {
+    return lower;
+  }
+  const value = ipv6ToBigInt(lower);
+  if (value >> BigInt(32) === BigInt(0xffff)) {
+    const v4 = value & BigInt(0xffffffff);
+    return [
+      Number((v4 >> BigInt(24)) & BigInt(0xff)),
+      Number((v4 >> BigInt(16)) & BigInt(0xff)),
+      Number((v4 >> BigInt(8)) & BigInt(0xff)),
+      Number(v4 & BigInt(0xff))
+    ].join('.');
+  }
+  return lower;
 };
 
 const isBlockedIp = (ip: string): boolean => {
@@ -264,39 +307,94 @@ const assertSafeUrl = async (rawUrl: string): Promise<void> => {
   }
 };
 
+// Read a fetch response body into a Buffer, hard-capping it so a huge page
+// cannot exhaust worker memory before JSDOM parsing. A Content-Length header
+// over the limit is rejected up front; streamed/chunked bodies are capped as
+// they arrive.
+const readBodyWithLimit = async (
+  response: Response,
+  maxBytes: number
+): Promise<Buffer> => {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
+  }
+
+  if (!response.body) {
+    return Buffer.alloc(0);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks);
+};
+
 // Fetch with manual redirect handling: every hop (the initial URL and each
-// Location target) passes assertSafeUrl before a request is sent, and redirects
-// are bounded to prevent loops. Returns the first non-3xx response, so the
-// caller keeps the existing `response.ok` / `response.text()` parsing.
+// Location target) passes assertSafeUrl before a request is sent, redirects are
+// bounded to prevent loops, and each hop is aborted if it exceeds
+// WEB_FETCH_TIMEOUT_MS. Redirect bodies are drained with a size cap. Returns
+// the first non-3xx response, so the caller keeps the existing
+// `response.ok` / body parsing.
 const fetchApproved = async (urlString: string): Promise<Response> => {
   let current = urlString;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     await assertSafeUrl(current);
 
-    const response = await fetch(current, {
-      redirect: 'manual',
-      headers: { 'User-Agent': 'Folio-RAG/1.0' }
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(current, {
+        redirect: 'manual',
+        headers: { 'User-Agent': 'Folio-RAG/1.0' },
+        signal: controller.signal
+      });
 
-    if (
-      response.status >= 300 &&
-      response.status < 400 &&
-      response.headers.has('location')
-    ) {
-      const next = new URL(
-        response.headers.get('location')!,
-        current
-      ).toString();
-      await response.arrayBuffer().catch(() => {}); // drain + release the socket
-      if (next === current) {
-        throw new Error('Redirect loop detected.');
+      if (
+        response.status >= 300 &&
+        response.status < 400 &&
+        response.headers.has('location')
+      ) {
+        const next = new URL(
+          response.headers.get('location')!,
+          current
+        ).toString();
+        // Drain (capped) + release the socket for the redirect body.
+        await readBodyWithLimit(response, MAX_WEB_BODY_BYTES).catch(() => {});
+        if (next === current) {
+          throw new Error('Redirect loop detected.');
+        }
+        current = next;
+        continue;
       }
-      current = next;
-      continue;
-    }
 
-    return response;
+      return response;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`Request to ${current} timed out.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
@@ -316,7 +414,9 @@ const extractFromWeb = async (
   if (!response.ok) {
     throw new Error(`Failed to fetch URL: ${response.status}`);
   }
-  const html = await response.text();
+  const html = (await readBodyWithLimit(response, MAX_WEB_BODY_BYTES)).toString(
+    'utf8'
+  );
   const dom = new JSDOM(html, { url });
 
   const { Readability } = await import('@mozilla/readability');
