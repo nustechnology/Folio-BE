@@ -327,10 +327,13 @@ const resolveAndValidate = async (rawUrl: string): Promise<ResolvedHost> => {
 // Read a fetch response body into a Buffer, hard-capping it so a huge page
 // cannot exhaust worker memory before JSDOM parsing. A Content-Length header
 // over the limit is rejected up front; streamed/chunked bodies are capped as
-// they arrive.
+// they arrive. If the caller's per-hop deadline (abort signal) fires mid-body,
+// a clear timeout error is thrown instead of returning a truncated body.
 const readBodyWithLimit = async (
   response: http.IncomingMessage,
-  maxBytes: number
+  maxBytes: number,
+  signal?: AbortSignal,
+  timeoutMessage = 'Request timed out.'
 ): Promise<Buffer> => {
   const declared = Number(response.headers['content-length']);
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -340,16 +343,34 @@ const readBodyWithLimit = async (
 
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of response) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buf.length;
-    if (total > maxBytes) {
-      response.destroy();
-      throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
+  try {
+    for await (const chunk of response) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > maxBytes) {
+        response.destroy();
+        throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
+      }
+      chunks.push(buf);
     }
-    chunks.push(buf);
+  } finally {
+    // The deadline can abort the request mid-body (socket torn down → the
+    // stream just ends early); surface that as a timeout rather than parsing a
+    // truncated page as if it succeeded.
+    if (signal?.aborted) {
+      throw new Error(timeoutMessage);
+    }
   }
   return Buffer.concat(chunks);
+};
+
+// Result of one pinned HTTP(S) hop. The per-hop deadline (timer + abort
+// listener) stays active after the response headers arrive, so the caller must
+// call `cleanup()` once the body has been fully consumed (or the hop fails).
+type Hop = {
+  response: http.IncomingMessage;
+  cleanup: () => void;
+  signal: AbortSignal;
 };
 
 // Perform a single HTTP(S) hop pinned to a pre-validated IP. The `lookup`
@@ -357,79 +378,96 @@ const readBodyWithLimit = async (
 // hostname, so DNS cannot be re-resolved to a private address at connect time
 // (DNS rebinding). The request keeps the real hostname for the Host header and
 // TLS SNI, so virtual hosting and certificate validation still work. Aborts the
-// hop if it exceeds WEB_FETCH_TIMEOUT_MS.
-const fetchHop = async (url: string): Promise<http.IncomingMessage> => {
+// hop if it exceeds WEB_FETCH_TIMEOUT_MS — the deadline covers header receipt
+// AND body consumption (see readBodyWithLimit).
+const fetchHop = async (url: string): Promise<Hop> => {
   const parsed = new URL(url);
   const { hostname, ip, family } = await resolveAndValidate(url);
   const transport = parsed.protocol === 'https:' ? https : http;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+  let request: http.ClientRequest | undefined;
+  const onAbort = () => request?.destroy(new Error('timed out'));
+  controller.signal.addEventListener('abort', onAbort);
+  const cleanup = () => {
+    clearTimeout(timer);
+    controller.signal.removeEventListener('abort', onAbort);
+  };
 
   try {
-    return await new Promise<http.IncomingMessage>((resolve, reject) => {
-      const request = transport.request(
-        {
-          hostname,
-          port: parsed.port ? Number(parsed.port) : undefined,
-          path: `${parsed.pathname}${parsed.search}`,
-          method: 'GET',
-          servername: hostname,
-          // No connection pooling: each hop gets a fresh socket that closes
-          // once its response is consumed, so no lingering keep-alive sockets.
-          agent: false,
-          headers: { 'User-Agent': 'Folio-RAG/1.0' },
-          lookup: (
-            lookupHost: string,
-            _opts: unknown,
-            cb: (
-              err: Error | null,
-              addresses?: { address: string; family: number }[]
-            ) => void
-          ) => {
-            if (lookupHost.toLowerCase() !== hostname) {
-              cb(new Error('Unexpected hostname during lookup.'));
-              return;
+    const response = await new Promise<http.IncomingMessage>(
+      (resolve, reject) => {
+        request = transport.request(
+          {
+            hostname,
+            port: parsed.port ? Number(parsed.port) : undefined,
+            path: `${parsed.pathname}${parsed.search}`,
+            method: 'GET',
+            servername: hostname,
+            // No connection pooling: each hop gets a fresh socket that closes
+            // once its response is consumed, so no lingering keep-alive sockets.
+            agent: false,
+            headers: { 'User-Agent': 'Folio-RAG/1.0' },
+            lookup: (
+              lookupHost: string,
+              _opts: unknown,
+              cb: (
+                err: Error | null,
+                addresses?: { address: string; family: number }[]
+              ) => void
+            ) => {
+              if (lookupHost.toLowerCase() !== hostname) {
+                cb(new Error('Unexpected hostname during lookup.'));
+                return;
+              }
+              cb(null, [{ address: ip, family }]);
             }
-            cb(null, [{ address: ip, family }]);
-          }
-        },
-        (res) => resolve(res)
-      );
-      controller.signal.addEventListener('abort', () =>
-        request.destroy(new Error('timed out'))
-      );
-      request.on('error', reject);
-      request.end();
-    });
+          },
+          (res) => resolve(res)
+        );
+        request.on('error', reject);
+        request.end();
+      }
+    );
+    // Success: keep the deadline + abort listener active so body consumption is
+    // still bounded. The caller invokes `cleanup()` after the body is read.
+    return { response, cleanup, signal: controller.signal };
   } catch (error) {
+    cleanup(); // hop failed (including timeout) — the deadline is over
     if (controller.signal.aborted) {
       throw new Error(`Request to ${url} timed out.`);
     }
     throw error;
-  } finally {
-    clearTimeout(timer);
   }
 };
 
 // Fetch with manual redirect handling: every hop (the initial URL and each
 // Location target) is resolved + validated and its connection pinned, redirects
-// are bounded to prevent loops, and each hop is aborted if it exceeds
-// WEB_FETCH_TIMEOUT_MS. Redirect bodies are drained with a size cap. Returns
-// the first non-3xx response.
-const fetchApproved = async (
-  urlString: string
-): Promise<http.IncomingMessage> => {
+// are bounded to prevent loops, and each hop's deadline covers header receipt
+// and body consumption. Redirect bodies are drained with a size cap. Returns
+// the first non-3xx hop.
+const fetchApproved = async (urlString: string): Promise<Hop> => {
   let current = urlString;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const response = await fetchHop(current);
+    const hop = await fetchHop(current);
 
-    const status = response.statusCode ?? 0;
-    if (status >= 300 && status < 400 && response.headers.location) {
-      const next = new URL(response.headers.location, current).toString();
-      // Drain (capped) + release the socket for the redirect body.
-      await readBodyWithLimit(response, MAX_WEB_BODY_BYTES).catch(() => {});
+    const status = hop.response.statusCode ?? 0;
+    if (status >= 300 && status < 400 && hop.response.headers.location) {
+      const next = new URL(hop.response.headers.location, current).toString();
+      // Drain (capped) + release the socket for the redirect body, then stop
+      // this hop's deadline before moving to the next one.
+      try {
+        await readBodyWithLimit(
+          hop.response,
+          MAX_WEB_BODY_BYTES,
+          hop.signal,
+          `Request to ${current} timed out.`
+        ).catch(() => {});
+      } finally {
+        hop.cleanup();
+      }
       if (next === current) {
         throw new Error('Redirect loop detected.');
       }
@@ -437,7 +475,7 @@ const fetchApproved = async (
       continue;
     }
 
-    return response;
+    return hop;
   }
 
   throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
@@ -453,36 +491,52 @@ const extractFromWeb = async (
   // Fetch the article, render it with jsdom, then run Mozilla's Readability to
   // strip navigation/ads and keep only the main article text. Also extracts the
   // page <title> and <meta name="author"> so they can fill blank source fields.
-  const response = await fetchApproved(url);
-  const status = response.statusCode ?? 0;
-  if (status < 200 || status >= 300) {
-    // Drain (capped) the error body so the socket is released back to the pool.
-    await readBodyWithLimit(response, MAX_WEB_BODY_BYTES).catch(() => {});
-    throw new Error(`Failed to fetch URL: ${status}`);
+  const hop = await fetchApproved(url);
+  try {
+    const status = hop.response.statusCode ?? 0;
+    if (status < 200 || status >= 300) {
+      // Drain (capped) the error body so the socket is released back to the pool.
+      await readBodyWithLimit(
+        hop.response,
+        MAX_WEB_BODY_BYTES,
+        hop.signal,
+        `Request to ${url} timed out.`
+      ).catch(() => {});
+      throw new Error(`Failed to fetch URL: ${status}`);
+    }
+    const html = (
+      await readBodyWithLimit(
+        hop.response,
+        MAX_WEB_BODY_BYTES,
+        hop.signal,
+        `Request to ${url} timed out.`
+      )
+    ).toString('utf8');
+    const dom = new JSDOM(html, { url });
+
+    const { Readability } = await import('@mozilla/readability');
+    const article = new Readability(dom.window.document).parse();
+
+    const title =
+      article?.title ||
+      dom.window.document.querySelector('title')?.textContent?.trim() ||
+      undefined;
+    const author =
+      dom.window.document
+        .querySelector('meta[name="author"]')
+        ?.getAttribute('content')
+        ?.trim() || undefined;
+
+    return {
+      content: (article?.textContent || '').trim(),
+      title,
+      author
+    };
+  } finally {
+    // The deadline is only stopped once the body is fully consumed (or the hop
+    // failed above) — never at header receipt.
+    hop.cleanup();
   }
-  const html = (await readBodyWithLimit(response, MAX_WEB_BODY_BYTES)).toString(
-    'utf8'
-  );
-  const dom = new JSDOM(html, { url });
-
-  const { Readability } = await import('@mozilla/readability');
-  const article = new Readability(dom.window.document).parse();
-
-  const title =
-    article?.title ||
-    dom.window.document.querySelector('title')?.textContent?.trim() ||
-    undefined;
-  const author =
-    dom.window.document
-      .querySelector('meta[name="author"]')
-      ?.getAttribute('content')
-      ?.trim() || undefined;
-
-  return {
-    content: (article?.textContent || '').trim(),
-    title,
-    author
-  };
 };
 
 const extractFromManual = (content: string): string => content.trim();
