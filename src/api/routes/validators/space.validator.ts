@@ -37,3 +37,24 @@ export const createSpaceSchema = Joi.object({
     .allow('')
     .optional()
 });
+
+export const spaceIdParamsSchema = Joi.object({
+  id: Joi.string().required()
+});
+
+export const updateSpaceSchema = Joi.object({
+  name: Joi.string()
+    .trim()
+    .min(NAME.MIN_LENGTH)
+    .max(NAME.MAX_LENGTH)
+    .optional()
+    .messages({
+      'string.empty': 'Enter a space name',
+      'string.min': 'Enter a space name'
+    }),
+  researchObjective: Joi.string()
+    .trim()
+    .max(OBJECTIVE_MAX_LENGTH)
+    .allow('')
+    .optional()
+}).min(1);
