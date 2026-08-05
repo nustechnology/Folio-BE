@@ -51,9 +51,17 @@ const remove = async (req: Request, res: Response) => {
   return successResponse(res, { success: true });
 };
 
+const get = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const space = await SpaceService.get(req.userId!, id);
+
+  return successResponse(res, { space });
+};
+
 export default {
   list,
   create,
   update,
-  remove
+  remove,
+  get
 };
