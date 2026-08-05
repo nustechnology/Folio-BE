@@ -358,6 +358,23 @@ const extractFromEpub = async (
 // ==========================================
 // Format-Specific Unified Parsers
 // ==========================================
+const injectTableStyles = (html: string): string => {
+  return html
+    .replace(
+      /<table>/g,
+      '<table class="w-full border-collapse border border-muted/50 my-4" style="width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px;">'
+    )
+    .replace(/<thead>/g, '<thead class="bg-muted/10">')
+    .replace(/<tr>/g, '<tr class="even:bg-muted/5">')
+    .replace(
+      /<th>/g,
+      '<th class="border border-muted/30 px-4 py-2 text-left font-bold text-sm text-foreground" style="border: 1px solid rgba(128,128,128,0.3); padding: 8px 16px; text-align: left; font-weight: bold; background-color: rgba(128,128,128,0.1);">'
+    )
+    .replace(
+      /<td>/g,
+      '<td class="border border-muted/30 px-4 py-2 text-sm text-foreground/80" style="border: 1px solid rgba(128,128,128,0.2); padding: 8px 16px;">'
+    );
+};
 
 // Parses a PDF file, extracting text and wrapping each page's content inside an HTML div
 // that preserves page boundaries for browser rendering.
@@ -367,6 +384,7 @@ const parsePdf = async (buffer: Buffer) => {
   const numPages = doc.numPages;
 
   let content = await extractFromPdf(buffer);
+  let isOcr = false;
 
   // Check if average characters per page is below the threshold (scanned PDF detection)
   const textOnly = content.replace(/\[page \d+\]/g, '');
@@ -383,20 +401,32 @@ const parsePdf = async (buffer: Buffer) => {
       }
     );
     content = await runOcrOnPdf(buffer, numPages);
+    isOcr = true;
   }
 
-  const pagesHtml = content
-    .split('\n\n')
-    .map((p) => {
-      const pageMarker = p.match(/^\[page (\d+)\]/);
-      if (pageMarker) {
-        const pageNum = pageMarker[1];
-        const rest = p.replace(/^\[page \d+\]\s*/, '');
+  const pagePromises = content.split('\n\n').map(async (p) => {
+    const pageMarker = p.match(/^\[page (\d+)\]/);
+    if (pageMarker) {
+      const pageNum = pageMarker[1];
+      const rest = p.replace(/^\[page \d+\]\s*/, '');
+      if (isOcr) {
+        const parsedHtml = await marked.parse(rest);
+        const styledHtml = injectTableStyles(parsedHtml);
+        return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div>${styledHtml}</div>`;
+      } else {
         return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div><p>${rest.replace(/\n/g, '<br/>')}</p></div>`;
       }
+    }
+    if (isOcr) {
+      const parsedHtml = await marked.parse(p);
+      const styledHtml = injectTableStyles(parsedHtml);
+      return styledHtml;
+    } else {
       return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
-    })
-    .join('');
+    }
+  });
+
+  const pagesHtml = (await Promise.all(pagePromises)).join('');
   return {
     content,
     structuredContent: {
