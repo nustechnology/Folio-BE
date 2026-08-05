@@ -88,6 +88,9 @@ model Note {
   researchSpace         ResearchSpace @relation(fields: [researchSpaceId], references: [id])
   title                 String
   content               String
+  /// Plain-text projection of `content`, derived server-side on write. Search
+  /// runs against this so a query cannot match the markup's tag names.
+  contentText           String       @default("")
   originType            OriginType
   originConversationId  String?
   originConversation    Conversation? @relation(fields: [originConversationId], references: [id])
