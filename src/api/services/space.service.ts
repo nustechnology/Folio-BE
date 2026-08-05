@@ -86,9 +86,23 @@ const remove = async (ownerId: string, id: string) => {
   return SpaceRepository.remove(id);
 };
 
+const get = async (ownerId: string, id: string) => {
+  const space = await SpaceRepository.findByIdAndOwnerWithCounts(id, ownerId);
+  if (!space) {
+    throw new AppError(
+      'Space not found.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SPACE_NOT_FOUND
+    );
+  }
+
+  return space;
+};
+
 export default {
   list,
   create,
   update,
-  remove
+  remove,
+  get
 };

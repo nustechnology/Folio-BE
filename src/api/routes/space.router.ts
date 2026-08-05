@@ -31,6 +31,13 @@ router.post(
   asyncHandler(SpaceController.create)
 );
 
+router.get(
+  '/:id',
+  auth,
+  validateParams(spaceIdParamsSchema),
+  asyncHandler(SpaceController.get)
+);
+
 router.patch(
   '/:id',
   auth,
