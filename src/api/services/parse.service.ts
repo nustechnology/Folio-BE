@@ -3,6 +3,10 @@ import mammoth from 'mammoth';
 import pLimit from 'p-limit';
 import { marked } from 'marked';
 
+import { runOcrOnPdf } from '~/api/services/ocr.service';
+import { env } from '~/config/enviroment';
+import logger from '~/config/logger';
+
 // Rough tag stripper for XML-based containers (PPTX slides, XLSX strings,
 // EPUB documents) — good enough to pull readable text without a full HTML parser.
 const stripTags = (xml: string): string => {
@@ -358,7 +362,29 @@ const extractFromEpub = async (
 // Parses a PDF file, extracting text and wrapping each page's content inside an HTML div
 // that preserves page boundaries for browser rendering.
 const parsePdf = async (buffer: Buffer) => {
-  const content = await extractFromPdf(buffer);
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const numPages = doc.numPages;
+
+  let content = await extractFromPdf(buffer);
+
+  // Check if average characters per page is below the threshold (scanned PDF detection)
+  const textOnly = content.replace(/\[page \d+\]/g, '');
+  const avgCharsPerPage = numPages > 0 ? textOnly.length / numPages : 0;
+  const threshold = Number(env.OCR_CHARS_PER_PAGE_THRESHOLD);
+
+  if (avgCharsPerPage < threshold) {
+    logger.info(
+      '[ParseService] PDF appears to be scanned — starting OCR fallback',
+      {
+        numPages,
+        avgCharsPerPage: avgCharsPerPage.toFixed(1),
+        threshold
+      }
+    );
+    content = await runOcrOnPdf(buffer, numPages);
+  }
+
   const pagesHtml = content
     .split('\n\n')
     .map((p) => {
