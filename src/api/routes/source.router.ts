@@ -8,10 +8,8 @@ import {
   validateParams,
   validateQuery
 } from '~/api/middlewares/validation.middleware';
-import {
-  listSourcesQuerySchema,
-  sourceIdParamSchema
-} from '~/api/routes/validators/source.validator';
+import { sourceIdParamSchema } from '~/api/routes/validators/common.validator';
+import { listSourcesQuerySchema } from '~/api/routes/validators/source.validator';
 
 const router = Router();
 

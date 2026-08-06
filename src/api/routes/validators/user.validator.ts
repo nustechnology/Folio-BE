@@ -1,6 +1,6 @@
 import Joi from 'joi';
 
-import { NAME } from '~/api/utils/constants';
+import { ADDRESS_MAX_LENGTH, NAME } from '~/api/utils/constants';
 
 export const userIdParamsSchema = Joi.object({
   id: Joi.string().required()
@@ -9,5 +9,5 @@ export const userIdParamsSchema = Joi.object({
 export const updateProfileSchema = Joi.object({
   name: Joi.string().min(NAME.MIN_LENGTH).max(NAME.MAX_LENGTH).optional(),
   email: Joi.string().email().optional(),
-  address: Joi.string().allow('').optional()
+  address: Joi.string().allow('').max(ADDRESS_MAX_LENGTH).optional()
 }).min(1);

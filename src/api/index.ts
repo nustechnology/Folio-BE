@@ -3,8 +3,10 @@ import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { openApiDocument } from '~/api/docs/openapi';
 import { errorHandler } from '~/api/middlewares/error.middleware';
+import { writeRateLimiter } from '~/api/middlewares/rate-limit.middleware';
 import { requestLogger } from '~/api/middlewares/request-logger.middleware';
 import routes from '~/api/routes/index';
+import { JSON_BODY_LIMIT } from '~/api/utils/constants';
 import { corsOptions } from '~/config/cors';
 
 interface ApiInterface {
@@ -15,9 +17,14 @@ class Api implements ApiInterface {
   async server(): Promise<Application> {
     const app = express();
     app.use(requestLogger);
-    app.use(express.json());
-    app.use(express.urlencoded({ extended: true }));
+
     app.use(cors(corsOptions));
+
+    app.use(writeRateLimiter);
+
+    app.use(express.json({ limit: JSON_BODY_LIMIT }));
+
+    app.use(express.urlencoded({ extended: true }));
     app.get('/api-docs.json', (_req: Request, res: Response) => {
       res.json(openApiDocument);
     });

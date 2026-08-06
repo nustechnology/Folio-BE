@@ -7,15 +7,6 @@ import {
 } from '~/api/utils/constants';
 import { OriginType } from '~/generated/prisma/client';
 
-export const spaceIdParamSchema = Joi.object({
-  spaceId: Joi.string().uuid().required()
-});
-
-export const noteParamsSchema = Joi.object({
-  spaceId: Joi.string().uuid().required(),
-  noteId: Joi.string().uuid().required()
-});
-
 export const listNotesQuerySchema = Joi.object({
   search: Joi.string().allow('').optional(),
   sort: Joi.string()

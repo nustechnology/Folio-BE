@@ -32,6 +32,11 @@ export const openApiDocument = {
       name: 'Notes',
       description:
         'Private notes inside a research space. Notes are working material, not evidence sources: their content is never used as AI chat retrieval context unless explicitly converted into a source.'
+    },
+    {
+      name: 'Notebook',
+      description:
+        "A space's single working document — the long-form report the user writes. Auto-saved, at most one per space, and like notes it is never used as AI chat retrieval context. Unlike a note, it has no path to becoming a source."
     }
   ],
   paths: {
@@ -82,6 +87,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -135,6 +141,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -188,6 +195,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -218,6 +226,7 @@ export const openApiDocument = {
           '401': {
             $ref: '#/components/responses/Unauthorized'
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -282,6 +291,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -377,6 +387,101 @@ export const openApiDocument = {
           '500': {
             $ref: '#/components/responses/InternalError'
           }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}': {
+      get: {
+        tags: ['Spaces'],
+        summary: 'Get a single research space',
+        description:
+          "Returns one space owned by the authenticated user, with its source and note counts. Used for in-space breadcrumbs and the sidebar's space block.",
+        operationId: 'getSpace',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
+        responses: {
+          '200': {
+            description: 'Space detail',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/CreateSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/SpaceNotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}/notebook': {
+      get: {
+        tags: ['Notebook'],
+        summary: "Read a space's notebook",
+        description:
+          'Returns the notebook of a space owned by the authenticated user. A space whose notebook has never been saved answers `200` with empty content and null `id`/timestamps — reading never creates the notebook.',
+        operationId: 'getNotebook',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
+        responses: {
+          '200': {
+            description: 'Notebook content',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/NotebookSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/SpaceNotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      },
+      put: {
+        tags: ['Notebook'],
+        summary: "Replace a space's notebook content",
+        description:
+          'Creates or replaces the notebook of a space owned by the authenticated user. The whole document is sent every time, so the call is idempotent. Content is sanitized to the formatting the notebook editor supports (bold, italic, H1–H3, lists, blockquote, links); the 100,000-character limit is measured against the plain-text projection of the sanitized markup, while the raw HTML payload is capped at 1,000,000 characters. Empty content is accepted, and markup carrying no text is stored as empty. Independently of those character caps, the request body must fit the 2 MB JSON transport limit — a larger body answers 413 before validation runs.',
+        operationId: 'saveNotebook',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/SaveNotebookRequest' }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Notebook saved',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/NotebookSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error: plain-text content > 100,000 chars (code: NOTEBOOK_CONTENT_TOO_LONG) or raw markup > 1,000,000 chars',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/SpaceNotFound' },
+          '413': { $ref: '#/components/responses/PayloadTooLarge' },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
+          '500': { $ref: '#/components/responses/InternalError' }
         }
       }
     },
@@ -484,6 +589,8 @@ export const openApiDocument = {
               }
             }
           },
+          '413': { $ref: '#/components/responses/PayloadTooLarge' },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -680,6 +787,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -775,6 +883,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -836,6 +945,7 @@ export const openApiDocument = {
           '404': {
             $ref: '#/components/responses/SpaceNotFound'
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -1076,6 +1186,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -1135,6 +1246,7 @@ export const openApiDocument = {
               }
             }
           },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -1314,6 +1426,28 @@ export const openApiDocument = {
       Unauthorized: {
         description:
           'Missing (code: TOKEN_MISSING), expired (code: TOKEN_EXPIRED), or invalid (code: TOKEN_INVALID) bearer token',
+        content: {
+          'application/json': {
+            schema: {
+              $ref: '#/components/schemas/ErrorResponse'
+            }
+          }
+        }
+      },
+      PayloadTooLarge: {
+        description:
+          'The request body exceeded the 2 MB transport limit and was rejected before validation ran (code: PAYLOAD_TOO_LARGE)',
+        content: {
+          'application/json': {
+            schema: {
+              $ref: '#/components/schemas/ErrorResponse'
+            }
+          }
+        }
+      },
+      TooManyRequests: {
+        description:
+          'Write rate limit exceeded — 120 requests per minute per user (code: RATE_LIMIT_EXCEEDED). The `Retry-After` and `RateLimit` headers carry the wait.',
         content: {
           'application/json': {
             schema: {
@@ -1798,6 +1932,79 @@ export const openApiDocument = {
               deleted: {
                 type: 'boolean',
                 enum: [true]
+              }
+            }
+          }
+        }
+      },
+      Notebook: {
+        type: 'object',
+        required: [
+          'id',
+          'researchSpaceId',
+          'content',
+          'createdAt',
+          'updatedAt'
+        ],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description:
+              'Null when the notebook has never been saved — the row does not exist yet.'
+          },
+          researchSpaceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          content: {
+            type: 'string',
+            description:
+              'Sanitized rich-text markup. Empty string for an unwritten notebook.',
+            example:
+              '<h1>Aged-Care Operations</h1><p>Providers describe duplicate entry across systems.</p>'
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true
+          }
+        }
+      },
+      SaveNotebookRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['content'],
+        properties: {
+          content: {
+            type: 'string',
+            maxLength: 1000000,
+            description:
+              'The whole document as rich-text markup. May be empty. Sanitized server-side; plain-text length must not exceed 100,000 characters.',
+            example: '<h1>Working notebook</h1><p>First findings.</p>'
+          }
+        }
+      },
+      NotebookSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['notebook'],
+            properties: {
+              notebook: {
+                $ref: '#/components/schemas/Notebook'
               }
             }
           }

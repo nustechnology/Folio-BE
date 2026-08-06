@@ -15,11 +15,11 @@ import {
   toPlainText,
   toPreview
 } from '~/api/utils/rich-text.util';
+import { assertSpaceAccess } from '~/api/services/space-access';
 import { OriginType, Prisma } from '~/generated/prisma/client';
 import NoteRepository, {
   NoteRecord
 } from '~/prisma/repositories/note.repository';
-import SpaceRepository from '~/prisma/repositories/space.repository';
 
 /**
  * `contentText` is a search projection, not part of the API contract — it would
@@ -45,22 +45,6 @@ const toDetail = (note: NoteRecord) => ({
   ...shared(note),
   content: note.content
 });
-
-/**
- * A space the user does not own is reported as missing rather than forbidden,
- * so the API does not disclose which space ids exist.
- */
-const assertSpaceAccess = async (spaceId: string, ownerId: string) => {
-  const space = await SpaceRepository.findByIdAndOwner(spaceId, ownerId);
-  if (!space) {
-    throw new AppError(
-      'Research space not found.',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.SPACE_NOT_FOUND
-    );
-  }
-  return space;
-};
 
 /**
  * Sanitize submitted markup and measure the result. The length rules run
