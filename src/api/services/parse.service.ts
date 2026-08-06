@@ -3,7 +3,7 @@ import mammoth from 'mammoth';
 import pLimit from 'p-limit';
 import { marked } from 'marked';
 
-import { runOcrOnPdf } from '~/api/services/ocr.service';
+import { runOcrOnPdf, runOcrOnPdfPages } from '~/api/services/ocr.service';
 import { env } from '~/config/enviroment';
 import logger from '~/config/logger';
 
@@ -228,11 +228,15 @@ const parsePptxSlides = async (
 // PDF: pdfjs-dist is used to read layout coordinate entries and reconstruct lines.
 // Text is read page-by-page with a `[page N]` marker preserved so
 // the chunking pipeline can attach page-level citation locators later.
-const extractFromPdf = async (buffer: Buffer): Promise<string> => {
+const extractFromPdf = async (
+  buffer: Buffer
+): Promise<{ text: string; tablePages: number[] }> => {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
 
   let text = '';
+  const tablePages: number[] = [];
+
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
@@ -263,7 +267,6 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
     }
 
     // 2. Group items by vertical baseline (y coordinate is transform[5])
-    // Standard PDFs have y=0 at the bottom and y increases upwards.
     const tolerance = 3; // 3pt baseline tolerance
     const linesMap: { y: number; items: typeof items }[] = [];
 
@@ -281,10 +284,12 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
       }
     }
 
-    // Sort lines from top to bottom (y descending in native PDF space)
+    // Sort lines from top to bottom
     linesMap.sort((a, b) => b.y - a.y);
 
     let pageText = '';
+    let tableScore = 0;
+
     for (let j = 0; j < linesMap.length; j++) {
       const line = linesMap[j];
 
@@ -301,16 +306,17 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
       const lineFontSize =
         totalLineChars > 0 ? lineFontSizeSum / totalLineChars : bodyFontSize;
 
-      // Dynamic spacing thresholds based on the line's font size
-      const wordGap = Math.max(3, lineFontSize * 0.25);
-      const colGap = Math.max(12, lineFontSize * 1.5);
+      // Dynamic spacing thresholds based on the line's font size (optimized for sensitivity)
+      const wordGap = Math.max(2.5, lineFontSize * 0.2);
+      const colGap = Math.max(9, lineFontSize * 0.9);
 
-      // Sort items within the same line from left to right (x ascending, transform[4])
+      // Sort items within the same line from left to right (x ascending)
       line.items.sort((a, b) => a.transform[4] - b.transform[4]);
 
       let lineText = '';
       let prevX = -1;
       let prevWidth = 0;
+      let lineGapsCount = 0;
 
       for (const item of line.items) {
         const x = item.transform[4];
@@ -319,17 +325,39 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
           // If the horizontal gap is larger than colGap, treat it as a column separator (tab)
           if (gap > colGap) {
             lineText += '\t';
+            lineGapsCount++;
           } else if (gap > wordGap) {
             lineText += ' ';
           }
         }
         lineText += item.str;
         prevX = x;
-        prevWidth = item.width || item.str.length * (lineFontSize * 0.6); // Scale fallback width by font size
+        // Cap width to prevent PDF generator layout bloat from swallowing column gaps
+        prevWidth = Math.min(
+          item.width || item.str.length * (lineFontSize * 0.5),
+          item.str.length * (lineFontSize * 0.55)
+        );
+      }
+
+      // Add to table score if this row exhibits multiple aligned text blocks (columns)
+      if (lineGapsCount >= 2) {
+        tableScore += 2;
+      } else if (lineGapsCount === 1) {
+        tableScore += 1;
       }
 
       // If line font size is significantly larger than body text size, format it as a markdown heading
-      if (lineFontSize >= bodyFontSize + 2.5) {
+      const trimmedLine = lineText.trim();
+      const wordCount = trimmedLine.split(/\s+/).length;
+      const isShortLine =
+        trimmedLine.length > 0 && trimmedLine.length < 100 && wordCount < 15;
+      const doesNotEndWithPeriod = !trimmedLine.endsWith('.');
+
+      if (
+        lineFontSize >= bodyFontSize + 2.5 &&
+        isShortLine &&
+        doesNotEndWithPeriod
+      ) {
         if (lineFontSize >= bodyFontSize + 5.5) {
           lineText = '## ' + lineText; // Major heading (H2)
         } else {
@@ -343,20 +371,25 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
       if (j < linesMap.length - 1) {
         const currentY = line.y;
         const nextY = linesMap[j + 1].y;
-        const verticalGap = currentY - nextY; // descending order
+        const verticalGap = currentY - nextY;
 
         if (verticalGap > 17) {
-          pageText += '\n\n'; // Large gap -> Paragraph break
+          pageText += '\n\n'; // Paragraph break
         } else {
-          pageText += '\n'; // Normal gap -> Line break within same paragraph
+          pageText += '\n'; // Line break within same paragraph
         }
       }
+    }
+
+    // If page score shows visual column structure patterns, mark it as a table page
+    if (tableScore >= 3) {
+      tablePages.push(i);
     }
 
     text += `[page ${i}]\n${pageText}\n\n`;
   }
 
-  return text.trim();
+  return { text: text.trim(), tablePages };
 };
 
 // DOCX: mammoth converts the document to plain text and HTML.
@@ -583,8 +616,11 @@ const parsePdf = async (buffer: Buffer) => {
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
   const numPages = doc.numPages;
 
-  let content = await extractFromPdf(buffer);
+  // 1. Get raw local coordinate extraction and layout-detected table pages
+  const { text: contentText, tablePages } = await extractFromPdf(buffer);
+  let content = contentText;
   let isOcr = false;
+  let ocrPageMap: Record<number, string> = {};
 
   // Check if average characters per page is below the threshold (scanned PDF detection)
   const textOnly = content.replace(/\[page \d+\]/g, '');
@@ -602,24 +638,45 @@ const parsePdf = async (buffer: Buffer) => {
     );
     content = await runOcrOnPdf(buffer, numPages);
     isOcr = true;
+  } else {
+    // 2. If any pages contain tables, call Gemini to OCR only those specific pages!
+    if (tablePages.length > 0) {
+      logger.info(
+        `[ParseService] Detected tables on pages: ${tablePages.join(', ')} — running targeted Gemini OCR for these pages`
+      );
+      try {
+        ocrPageMap = await runOcrOnPdfPages(buffer, tablePages);
+      } catch (err) {
+        logger.error(
+          '[ParseService] Targeted page OCR failed, falling back to local table layouts',
+          err
+        );
+      }
+    }
   }
 
-  const pagePromises = content.split('\n\n').map(async (p) => {
+  const pagePromises = content.split(/(?=\[page \d+\])/).map(async (p) => {
     const pageMarker = p.match(/^\[page (\d+)\]/);
     if (pageMarker) {
-      const pageNum = pageMarker[1];
+      const pageNum = Number(pageMarker[1]);
       const rest = p.replace(/^\[page \d+\]\s*/, '');
-      const hasTables = rest.includes('\t');
-      const hasHeadings = /(?:^|\n)#{2,3} /.test(rest);
+
+      // Use Gemini visual layout/OCR text if available for this page, otherwise use local coordinates
+      const hasOcrText = ocrPageMap[pageNum] !== undefined;
+      const pageText = hasOcrText ? ocrPageMap[pageNum] : rest;
+
+      const isTablePage = tablePages.includes(pageNum);
+      const hasTables = isTablePage || pageText.includes('\t');
+      const hasHeadings = /(?:^|\n)#{2,3} /.test(pageText);
 
       // Convert tab-separated layouts to styled tables if OCR is active or tables/headings are detected
-      if (isOcr || hasTables || hasHeadings) {
-        const markdownContent = convertTabsToMarkdownTables(rest);
+      if (isOcr || hasOcrText || hasTables || hasHeadings) {
+        const markdownContent = convertTabsToMarkdownTables(pageText);
         const parsedHtml = await marked.parse(markdownContent);
         const styledHtml = injectStyles(parsedHtml);
         return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div>${styledHtml}</div>`;
       } else {
-        const paragraphsHtml = rest
+        const paragraphsHtml = pageText
           .split('\n\n')
           .filter((para) => para.trim().length > 0)
           .map((para) => `<p>${para.replace(/\n/g, ' ').trim()}</p>`)
@@ -645,6 +702,23 @@ const parsePdf = async (buffer: Buffer) => {
   });
 
   const pagesHtml = (await Promise.all(pagePromises)).join('');
+
+  // Update raw content string with the visual table markdown from Gemini
+  // so that vector search embeddings are built from high-quality tables
+  if (Object.keys(ocrPageMap).length > 0) {
+    const updatedPages = content.split(/(?=\[page \d+\])/).map((page) => {
+      const match = page.match(/^\[page (\d+)\]/);
+      if (match) {
+        const pageNum = Number(match[1]);
+        if (ocrPageMap[pageNum]) {
+          return `[page ${pageNum}]\n${ocrPageMap[pageNum]}`;
+        }
+      }
+      return page;
+    });
+    content = updatedPages.join('\n\n');
+  }
+
   return {
     content,
     structuredContent: {

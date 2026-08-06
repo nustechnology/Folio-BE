@@ -77,4 +77,75 @@ export const runOcrOnPdf = async (
   }
 };
 
-export default { runOcrOnPdf };
+export const runOcrOnPdfPages = async (
+  buffer: Buffer,
+  pageNumbers: number[]
+): Promise<Record<number, string>> => {
+  if (!env.GEMINI_API_KEY) {
+    throw new OcrError(
+      'OCR requested but GEMINI_API_KEY is not set. ' +
+        'Add GEMINI_API_KEY to your .env file.'
+    );
+  }
+
+  if (buffer.length > MAX_INLINE_PDF_BYTES) {
+    throw new OcrError(
+      `PDF is ${(buffer.length / 1024 / 1024).toFixed(1)} MB, ` +
+        `which exceeds the ${MAX_INLINE_PDF_BYTES / 1024 / 1024} MB inline limit.`
+    );
+  }
+
+  logger.info(
+    '[OCR] Sending PDF to Gemini for specific page table extraction',
+    {
+      sizeBytes: buffer.length,
+      pagesToOcr: pageNumbers
+    }
+  );
+
+  try {
+    const genai = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+    const model = genai.getGenerativeModel({ model: OCR_MODEL });
+
+    const prompt =
+      `Please extract the text and reconstruct any tables ONLY from the following pages of the PDF: ${pageNumbers.join(', ')}. ` +
+      `Do not extract or return any content from any other pages in the document. ` +
+      `For each requested page, begin its content with a marker in the exact format "[page N]" ` +
+      `(where N is the page number), followed by a newline. ` +
+      `Format all tables on these pages using markdown table syntax. ` +
+      `Separate page outputs with a blank line. ` +
+      `Do not wrap the output in markdown code blocks, and do not add any conversational commentary.`;
+
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType: 'application/pdf',
+          data: buffer.toString('base64')
+        }
+      },
+      prompt
+    ]);
+
+    const text = result.response.text().trim();
+    logger.info('[OCR] Specific page table extraction completed');
+
+    const pageMap: Record<number, string> = {};
+    const pageSegments = text.split(/\[page (\d+)\]/);
+
+    for (let i = 1; i < pageSegments.length; i += 2) {
+      const pageNum = Number(pageSegments[i]);
+      const pageText = pageSegments[i + 1]?.trim() || '';
+      pageMap[pageNum] = pageText;
+    }
+
+    return pageMap;
+  } catch (error: any) {
+    logger.error('[OCR] Gemini page table extraction failed', {
+      message: error.message,
+      stack: error.stack
+    });
+    throw new OcrError(`Gemini table extraction failed: ${error.message}`);
+  }
+};
+
+export default { runOcrOnPdf, runOcrOnPdfPages };
