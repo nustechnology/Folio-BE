@@ -695,6 +695,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@google/generative-ai@npm:^0.24.1":
+  version: 0.24.1
+  resolution: "@google/generative-ai@npm:0.24.1"
+  checksum: 10c0/8da77fc648b04fc2ecef53e75230e2ee67a8fd29a34b6b8874e77a7332b2a1e4b51d44dd9eb604fb063ed8ea46d293aac5b1e2a955ae2435e2582a265f2cb80d
+  languageName: node
+  linkType: hard
+
 "@hapi/address@npm:^5.1.1":
   version: 5.1.1
   resolution: "@hapi/address@npm:5.1.1"
@@ -4959,6 +4966,7 @@ __metadata:
   resolution: "nus-express-template@workspace:."
   dependencies:
     "@aws-sdk/client-s3": "npm:^3.1099.0"
+    "@google/generative-ai": "npm:^0.24.1"
     "@langchain/core": "npm:^1.2.3"
     "@langchain/textsplitters": "npm:^1.0.1"
     "@mozilla/readability": "npm:^0.6.0"
