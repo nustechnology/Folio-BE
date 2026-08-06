@@ -301,6 +301,10 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
       const lineFontSize =
         totalLineChars > 0 ? lineFontSizeSum / totalLineChars : bodyFontSize;
 
+      // Dynamic spacing thresholds based on the line's font size
+      const wordGap = Math.max(3, lineFontSize * 0.25);
+      const colGap = Math.max(12, lineFontSize * 1.5);
+
       // Sort items within the same line from left to right (x ascending, transform[4])
       line.items.sort((a, b) => a.transform[4] - b.transform[4]);
 
@@ -312,16 +316,16 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
         const x = item.transform[4];
         if (prevX !== -1) {
           const gap = x - (prevX + prevWidth);
-          // If the horizontal gap is larger than 18 points, treat it as a column separator (tab)
-          if (gap > 18) {
+          // If the horizontal gap is larger than colGap, treat it as a column separator (tab)
+          if (gap > colGap) {
             lineText += '\t';
-          } else if (gap > 4) {
+          } else if (gap > wordGap) {
             lineText += ' ';
           }
         }
         lineText += item.str;
         prevX = x;
-        prevWidth = item.width || item.str.length * 6;
+        prevWidth = item.width || item.str.length * (lineFontSize * 0.6); // Scale fallback width by font size
       }
 
       // If line font size is significantly larger than body text size, format it as a markdown heading
