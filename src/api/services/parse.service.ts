@@ -225,8 +225,8 @@ const parsePptxSlides = async (
   return slides;
 };
 
-// PDF: pdfjs-dist is ESM-only, hence the dynamic import (the project compiles
-// to CommonJS). Text is read page-by-page with a `[page N]` marker preserved so
+// PDF: pdfjs-dist is used to read layout coordinate entries and reconstruct lines.
+// Text is read page-by-page with a `[page N]` marker preserved so
 // the chunking pipeline can attach page-level citation locators later.
 const extractFromPdf = async (buffer: Buffer): Promise<string> => {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -236,9 +236,119 @@ const extractFromPdf = async (buffer: Buffer): Promise<string> => {
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item) => (item as { str?: string }).str ?? '')
-      .join(' ');
+    const items = content.items as {
+      str: string;
+      transform: number[];
+      width?: number;
+      height?: number;
+    }[];
+
+    // 1. Find dominant body font size on the page (weighted by character length)
+    const fontSizeCounts: Record<number, number> = {};
+    for (const item of items) {
+      if (!item.str.trim()) continue;
+      const size = Math.round(item.height || Math.abs(item.transform[3]));
+      if (size > 0) {
+        fontSizeCounts[size] = (fontSizeCounts[size] || 0) + item.str.length;
+      }
+    }
+
+    let bodyFontSize = 10;
+    let maxCount = 0;
+    for (const [sizeStr, count] of Object.entries(fontSizeCounts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        bodyFontSize = Number(sizeStr);
+      }
+    }
+
+    // 2. Group items by vertical baseline (y coordinate is transform[5])
+    // Standard PDFs have y=0 at the bottom and y increases upwards.
+    const tolerance = 3; // 3pt baseline tolerance
+    const linesMap: { y: number; items: typeof items }[] = [];
+
+    for (const item of items) {
+      if (!item.str.trim()) continue;
+      const y = item.transform[5];
+
+      const foundLine = linesMap.find(
+        (line) => Math.abs(line.y - y) <= tolerance
+      );
+      if (foundLine) {
+        foundLine.items.push(item);
+      } else {
+        linesMap.push({ y, items: [item] });
+      }
+    }
+
+    // Sort lines from top to bottom (y descending in native PDF space)
+    linesMap.sort((a, b) => b.y - a.y);
+
+    let pageText = '';
+    for (let j = 0; j < linesMap.length; j++) {
+      const line = linesMap[j];
+
+      // Calculate average font size of the line
+      let totalLineChars = 0;
+      let lineFontSizeSum = 0;
+      for (const item of line.items) {
+        const size = Math.round(item.height || Math.abs(item.transform[3]));
+        if (size > 0) {
+          lineFontSizeSum += size * item.str.length;
+          totalLineChars += item.str.length;
+        }
+      }
+      const lineFontSize =
+        totalLineChars > 0 ? lineFontSizeSum / totalLineChars : bodyFontSize;
+
+      // Sort items within the same line from left to right (x ascending, transform[4])
+      line.items.sort((a, b) => a.transform[4] - b.transform[4]);
+
+      let lineText = '';
+      let prevX = -1;
+      let prevWidth = 0;
+
+      for (const item of line.items) {
+        const x = item.transform[4];
+        if (prevX !== -1) {
+          const gap = x - (prevX + prevWidth);
+          // If the horizontal gap is larger than 18 points, treat it as a column separator (tab)
+          if (gap > 18) {
+            lineText += '\t';
+          } else if (gap > 4) {
+            lineText += ' ';
+          }
+        }
+        lineText += item.str;
+        prevX = x;
+        prevWidth = item.width || item.str.length * 6;
+      }
+
+      // If line font size is significantly larger than body text size, format it as a markdown heading
+      if (lineFontSize >= bodyFontSize + 2.5) {
+        if (lineFontSize >= bodyFontSize + 5.5) {
+          lineText = '## ' + lineText; // Major heading (H2)
+        } else {
+          lineText = '### ' + lineText; // Sub-heading (H3)
+        }
+      }
+
+      pageText += lineText;
+
+      // Determine separator for the next line based on vertical baseline gap
+      if (j < linesMap.length - 1) {
+        const currentY = line.y;
+        const nextY = linesMap[j + 1].y;
+        const verticalGap = currentY - nextY; // descending order
+
+        if (verticalGap > 17) {
+          pageText += '\n\n'; // Large gap -> Paragraph break
+        } else {
+          pageText += '\n'; // Normal gap -> Line break within same paragraph
+        }
+      }
+    }
+
     text += `[page ${i}]\n${pageText}\n\n`;
   }
 
@@ -358,8 +468,10 @@ const extractFromEpub = async (
 // ==========================================
 // Format-Specific Unified Parsers
 // ==========================================
-const injectTableStyles = (html: string): string => {
-  return html
+
+// Injects Tailwind styles and inline CSS rules into tables and code blocks to render beautifully
+const injectStyles = (html: string): string => {
+  let styled = html
     .replace(
       /<table>/g,
       '<table class="w-full border-collapse border border-muted/50 my-4" style="width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px;">'
@@ -374,6 +486,90 @@ const injectTableStyles = (html: string): string => {
       /<td>/g,
       '<td class="border border-muted/30 px-4 py-2 text-sm text-foreground/80" style="border: 1px solid rgba(128,128,128,0.2); padding: 8px 16px;">'
     );
+
+  // Style block code (<pre><code class="xyz">)
+  styled = styled.replace(
+    /<pre><code class="([^"]*)">/g,
+    '<pre class="bg-muted/10 border border-muted/30 rounded-lg p-4 my-4 overflow-x-auto" style="background-color: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); padding: 16px; border-radius: 8px; margin: 16px 0; overflow-x: auto; font-family: monospace;"><code class="font-mono text-sm $1" style="font-family: monospace;">'
+  );
+  // Style block code (<pre><code> with no class)
+  styled = styled.replace(
+    /<pre><code>/g,
+    '<pre class="bg-muted/10 border border-muted/30 rounded-lg p-4 my-4 overflow-x-auto" style="background-color: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); padding: 16px; border-radius: 8px; margin: 16px 0; overflow-x: auto; font-family: monospace;"><code class="font-mono text-sm" style="font-family: monospace;">'
+  );
+
+  // Style inline code (<code>)
+  styled = styled.replace(
+    /<code>/g,
+    '<code class="bg-muted/10 rounded px-1.5 py-0.5 font-mono text-sm" style="background-color: rgba(128,128,128,0.08); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;">'
+  );
+
+  return styled;
+};
+
+// Renders an array of string cells as a Markdown table row
+const renderMarkdownTable = (rows: string[][]): string => {
+  if (rows.length === 0) return '';
+  const maxCols = Math.max(...rows.map((r) => r.length));
+
+  // Header row
+  const header = rows[0];
+  const headerCells = Array.from(
+    { length: maxCols },
+    (_, i) => header[i] || ''
+  );
+  const headerLine = '| ' + headerCells.join(' | ') + ' |';
+
+  // Separator row
+  const sepCells = Array.from({ length: maxCols }, () => '---');
+  const sepLine = '|' + sepCells.join('|') + '|';
+
+  // Data rows
+  const bodyLines = rows.slice(1).map((row) => {
+    const cells = Array.from({ length: maxCols }, (_, i) => row[i] || '');
+    return '| ' + cells.join(' | ') + ' |';
+  });
+
+  return [headerLine, sepLine, ...bodyLines].join('\n');
+};
+
+// Converts blocks of tab-separated text into markdown table blocks
+const convertTabsToMarkdownTables = (text: string): string => {
+  const lines = text.split('\n');
+  let result = '';
+  let inTable = false;
+  let tableRows: string[][] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isTableRow = line.includes('\t');
+
+    if (isTableRow) {
+      const cells = line.split('\t').map((c) => c.trim());
+      if (cells.filter(Boolean).length >= 2) {
+        if (!inTable) {
+          inTable = true;
+          tableRows = [];
+        }
+        tableRows.push(cells);
+        continue;
+      }
+    }
+
+    if (inTable) {
+      result += renderMarkdownTable(tableRows) + '\n\n';
+      inTable = false;
+      tableRows = [];
+    }
+
+    result += line + '\n';
+  }
+
+  if (inTable && tableRows.length > 0) {
+    result += renderMarkdownTable(tableRows) + '\n';
+  }
+
+  return result;
 };
 
 // Parses a PDF file, extracting text and wrapping each page's content inside an HTML div
@@ -409,20 +605,38 @@ const parsePdf = async (buffer: Buffer) => {
     if (pageMarker) {
       const pageNum = pageMarker[1];
       const rest = p.replace(/^\[page \d+\]\s*/, '');
-      if (isOcr) {
-        const parsedHtml = await marked.parse(rest);
-        const styledHtml = injectTableStyles(parsedHtml);
+      const hasTables = rest.includes('\t');
+      const hasHeadings = /(?:^|\n)#{2,3} /.test(rest);
+
+      // Convert tab-separated layouts to styled tables if OCR is active or tables/headings are detected
+      if (isOcr || hasTables || hasHeadings) {
+        const markdownContent = convertTabsToMarkdownTables(rest);
+        const parsedHtml = await marked.parse(markdownContent);
+        const styledHtml = injectStyles(parsedHtml);
         return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div>${styledHtml}</div>`;
       } else {
-        return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div><p>${rest.replace(/\n/g, '<br/>')}</p></div>`;
+        const paragraphsHtml = rest
+          .split('\n\n')
+          .filter((para) => para.trim().length > 0)
+          .map((para) => `<p>${para.replace(/\n/g, ' ').trim()}</p>`)
+          .join('');
+        return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div>${paragraphsHtml}</div>`;
       }
     }
-    if (isOcr) {
-      const parsedHtml = await marked.parse(p);
-      const styledHtml = injectTableStyles(parsedHtml);
+
+    const hasTables = p.includes('\t');
+    const hasHeadings = /(?:^|\n)#{2,3} /.test(p);
+    if (isOcr || hasTables || hasHeadings) {
+      const markdownContent = convertTabsToMarkdownTables(p);
+      const parsedHtml = await marked.parse(markdownContent);
+      const styledHtml = injectStyles(parsedHtml);
       return styledHtml;
     } else {
-      return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
+      return p
+        .split('\n\n')
+        .filter((para) => para.trim().length > 0)
+        .map((para) => `<p>${para.replace(/\n/g, ' ').trim()}</p>`)
+        .join('');
     }
   });
 
@@ -443,7 +657,7 @@ const parseDocx = async (buffer: Buffer) => {
     content: res.content,
     structuredContent: {
       type: 'document',
-      html: res.html
+      html: injectStyles(res.html)
     }
   };
 };
@@ -455,7 +669,7 @@ const parseMarkdownFile = async (buffer: Buffer) => {
     content: res.content,
     structuredContent: {
       type: 'document',
-      html: res.html
+      html: injectStyles(res.html)
     }
   };
 };
@@ -493,7 +707,7 @@ const parseEpubFile = async (buffer: Buffer) => {
     content: res.content,
     structuredContent: {
       type: 'document',
-      html: res.html
+      html: injectStyles(res.html)
     }
   };
 };
@@ -509,7 +723,7 @@ const parseTxt = async (buffer: Buffer) => {
     content,
     structuredContent: {
       type: 'document',
-      html: textHtml
+      html: injectStyles(textHtml)
     }
   };
 };
