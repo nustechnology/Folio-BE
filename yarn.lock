@@ -5567,8 +5567,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "nus-express-template@workspace:."
   dependencies:
-    "@google/generative-ai": "npm:^0.24.1"
     "@aws-sdk/client-s3": "npm:^3.1098.0"
+    "@google/generative-ai": "npm:^0.24.1"
     "@langchain/core": "npm:^1.2.3"
     "@langchain/textsplitters": "npm:^1.0.1"
     "@mozilla/readability": "npm:^0.6.0"
