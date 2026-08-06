@@ -185,9 +185,9 @@ const remove = async (id: string) => {
 
 export default {
   findManyByOwner,
+  findByIdAndOwner,
   findByNameAndOwner,
   findByNameAndOwnerExcluding,
-  findByIdAndOwner,
   findByIdAndOwnerWithCounts,
   create,
   update,
