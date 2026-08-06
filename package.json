@@ -13,7 +13,7 @@
     "db:seed": "tsx src/prisma/seeds/space.seed.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1099.0",
+    "@aws-sdk/client-s3": "^3.1098.0",
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.2.3",
     "@langchain/textsplitters": "^1.0.1",
@@ -43,6 +43,7 @@
     "reflect-metadata": "^0.1.13",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
+    "sanitize-html": "^2.17.6",
     "swagger-ui-express": "^5.0.1",
     "unified": "^11.0.5",
     "winston": "^3.19.0"
@@ -56,6 +57,7 @@
     "@types/jsonwebtoken": "^9.0.2",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.20.0",
+    "@types/sanitize-html": "^2.16.1",
     "@typescript-eslint/eslint-plugin": "^8.62.0",
     "@typescript-eslint/parser": "^8.62.0",
     "eslint": "^10.5.0",
