@@ -859,4 +859,4 @@ const parse = async (
   }
 };
 
-export default { parse };
+export default { parse, injectStyles };
