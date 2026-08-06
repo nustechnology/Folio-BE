@@ -27,6 +27,11 @@ export const openApiDocument = {
     {
       name: 'Sources',
       description: 'Source management within a research space'
+    },
+    {
+      name: 'Notes',
+      description:
+        'Private notes inside a research space. Notes are working material, not evidence sources: their content is never used as AI chat retrieval context unless explicitly converted into a source.'
     }
   ],
   paths: {
@@ -969,6 +974,232 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/spaces/{spaceId}/notes': {
+      post: {
+        tags: ['Notes'],
+        summary: 'Create a note',
+        description:
+          'Creates a user-created note in a space owned by the authenticated user. Rich-text content is sanitized to the formatting the editor supports (bold, italic, lists, links); the 20,000-character limit is measured against the plain-text projection of that content, while the raw HTML payload itself is capped at 200,000 characters. An empty or whitespace-only title is stored as "Untitled Note".',
+        operationId: 'createNote',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/CreateNoteRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '201': {
+            description: 'Note created successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/NoteSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error: title > 150 chars, empty content (code: NOTE_CONTENT_EMPTY), or plain-text content > 20,000 chars (code: NOTE_CONTENT_TOO_LONG)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            $ref: '#/components/responses/SpaceNotFound'
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
+      get: {
+        tags: ['Notes'],
+        summary: 'List notes in a space',
+        description:
+          'Returns notes in a space owned by the authenticated user. List items carry a short plain-text excerpt (`contentPreview`) instead of the full content — read a single note to get its markup.',
+        operationId: 'listNotes',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            name: 'search',
+            in: 'query',
+            required: false,
+            description: 'Filter by note title or content (case-insensitive)',
+            schema: {
+              type: 'string'
+            }
+          },
+          {
+            name: 'sort',
+            in: 'query',
+            required: false,
+            description: 'Sort order',
+            schema: {
+              type: 'string',
+              enum: [
+                'recently-updated',
+                'recently-created',
+                'alphabetical-az',
+                'alphabetical-za'
+              ],
+              default: 'recently-updated'
+            }
+          },
+          {
+            name: 'page',
+            in: 'query',
+            required: false,
+            description: 'Page number (default: 1)',
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              default: 1
+            }
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            description:
+              'Number of notes to return per page (default: 10, max: 100)',
+            schema: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 100,
+              default: 10
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'List of notes',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ListNotesSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error (invalid space id, sort, or paging)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            $ref: '#/components/responses/SpaceNotFound'
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}/notes/{noteId}': {
+      get: {
+        tags: ['Notes'],
+        summary: 'Read a note',
+        description:
+          'Returns a single note with its full sanitized rich-text content.',
+        operationId: 'getNote',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            name: 'noteId',
+            in: 'path',
+            required: true,
+            description: 'Note ID',
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Note found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/NoteSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error (space id or note id is not a UUID)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found (code: SPACE_NOT_FOUND) or note not found in that space (code: NOTE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
     '/api/v1/users/{id}': {
       get: {
         tags: ['Users'],
@@ -1022,7 +1253,30 @@ export const openApiDocument = {
         bearerFormat: 'JWT'
       }
     },
+    parameters: {
+      SpaceIdPath: {
+        name: 'spaceId',
+        in: 'path',
+        required: true,
+        description: 'Research space ID',
+        schema: {
+          type: 'string',
+          format: 'uuid'
+        }
+      }
+    },
     responses: {
+      SpaceNotFound: {
+        description:
+          'The space does not exist or is not owned by the authenticated user (code: SPACE_NOT_FOUND)',
+        content: {
+          'application/json': {
+            schema: {
+              $ref: '#/components/schemas/ErrorResponse'
+            }
+          }
+        }
+      },
       Unauthorized: {
         description:
           'Missing (code: TOKEN_MISSING), expired (code: TOKEN_EXPIRED), or invalid (code: TOKEN_INVALID) bearer token',
@@ -1416,6 +1670,187 @@ export const openApiDocument = {
           }
         }
       },
+      NoteBase: {
+        type: 'object',
+        required: [
+          'id',
+          'researchSpaceId',
+          'title',
+          'originType',
+          'createdAt',
+          'updatedAt',
+          'citationCount'
+        ],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid'
+          },
+          researchSpaceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          title: {
+            type: 'string',
+            description:
+              'Note title. "Untitled Note" when saved without a title.',
+            example: 'Key findings on transformer scaling'
+          },
+          originType: {
+            type: 'string',
+            enum: ['UserCreated', 'SavedAssistantAnswer'],
+            description:
+              'How the note came to exist: created by the user, or saved from an assistant answer.'
+          },
+          originConversationId: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description: 'Conversation the answer was saved from, if any.'
+          },
+          originMessageId: {
+            type: 'string',
+            nullable: true,
+            description: 'Message the answer was saved from, if any.'
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time'
+          },
+          citationCount: {
+            type: 'integer',
+            description: 'Number of citations referenced by this note',
+            example: 3
+          }
+        }
+      },
+      Note: {
+        allOf: [
+          {
+            $ref: '#/components/schemas/NoteBase'
+          },
+          {
+            type: 'object',
+            required: ['content'],
+            properties: {
+              content: {
+                type: 'string',
+                description: 'Sanitized rich-text content (HTML)',
+                example:
+                  '<p>Scaling laws hold across <strong>three</strong> orders of magnitude.</p>'
+              }
+            }
+          }
+        ]
+      },
+      NoteSummary: {
+        allOf: [
+          {
+            $ref: '#/components/schemas/NoteBase'
+          },
+          {
+            type: 'object',
+            required: ['contentPreview'],
+            properties: {
+              contentPreview: {
+                type: 'string',
+                description:
+                  'Single-line plain-text excerpt of the content (max 280 characters)',
+                example: 'Scaling laws hold across three orders of magnitude.'
+              }
+            }
+          }
+        ]
+      },
+      CreateNoteRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['content'],
+        properties: {
+          title: {
+            type: 'string',
+            maxLength: 150,
+            description:
+              'Note title (optional, max 150 characters). Empty or whitespace-only defaults to "Untitled Note".',
+            example: 'Key findings on transformer scaling'
+          },
+          content: {
+            type: 'string',
+            maxLength: 200000,
+            description:
+              'Rich-text content (HTML). Sanitized on save; its plain-text projection must be 1-20,000 characters and the raw HTML must not exceed 200,000 characters.',
+            example:
+              '<p>Scaling laws hold across <strong>three</strong> orders of magnitude.</p>'
+          }
+        }
+      },
+      NoteSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['note'],
+            properties: {
+              note: {
+                $ref: '#/components/schemas/Note'
+              }
+            }
+          }
+        }
+      },
+      ListNotesSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['notes', 'pagination'],
+            properties: {
+              notes: {
+                type: 'array',
+                items: {
+                  $ref: '#/components/schemas/NoteSummary'
+                }
+              },
+              pagination: {
+                type: 'object',
+                required: ['page', 'limit', 'totalCount', 'totalPages'],
+                properties: {
+                  page: {
+                    type: 'integer',
+                    example: 1
+                  },
+                  limit: {
+                    type: 'integer',
+                    example: 10
+                  },
+                  totalCount: {
+                    type: 'integer',
+                    example: 24
+                  },
+                  totalPages: {
+                    type: 'integer',
+                    example: 3
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       UserSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -1684,7 +2119,6 @@ export const openApiDocument = {
           }
         }
       },
-
       ErrorResponse: {
         type: 'object',
         required: ['status', 'message'],
@@ -1707,6 +2141,9 @@ export const openApiDocument = {
               'EMAIL_EXISTS',
               'SPACE_NAME_EXISTS',
               'SPACE_NOT_FOUND',
+              'NOTE_NOT_FOUND',
+              'NOTE_CONTENT_EMPTY',
+              'NOTE_CONTENT_TOO_LONG',
               'INTERNAL_ERROR'
             ],
             nullable: true
