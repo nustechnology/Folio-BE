@@ -8,12 +8,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # ensureBucket() runs at boot, before the server listens.
+      minio:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # .env carries host-mode values (localhost); inside the network the
+      # bucket lives on the minio service, same as db/redis above.
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
     ports:
       - "${PORT:-4000}:${PORT:-4000}"
 
