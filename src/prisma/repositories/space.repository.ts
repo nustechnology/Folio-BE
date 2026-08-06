@@ -63,10 +63,6 @@ const findManyByOwner = async (filters: ListFilters, options: ListOptions) => {
   return { spaces, totalCount };
 };
 
-const findByIdAndOwner = async (id: string, ownerId: string) => {
-  return prisma.researchSpace.findFirst({ where: { id, ownerId } });
-};
-
 const findByNameAndOwner = async (ownerId: string, name: string) => {
   return prisma.researchSpace.findFirst({
     where: { ownerId, name: { equals: name, mode: 'insensitive' } }
@@ -117,6 +113,5 @@ export default {
   findManyByOwner,
   findByIdAndOwner,
   findByNameAndOwner,
-  findByIdAndOwner,
   create
 };
