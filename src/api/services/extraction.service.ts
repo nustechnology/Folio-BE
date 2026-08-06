@@ -1,0 +1,616 @@
+import http from 'node:http';
+import https from 'node:https';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
+import { JSDOM } from 'jsdom';
+import JSZip from 'jszip';
+import mammoth from 'mammoth';
+import pLimit from 'p-limit';
+
+import { getFileExtension } from '~/api/utils/file.util';
+import { downloadObject } from '~/api/utils/minio.util';
+import type { SourceType } from '~/generated/prisma/enums';
+
+// ExtractInput is what the worker feeds in; sourceUrl is the MinIO object key
+// for File sources or the article URL for Web sources.
+export type ExtractInput = {
+  sourceType: SourceType;
+  sourceUrl?: string | null;
+  content?: string;
+};
+
+export type ExtractResult = {
+  content: string;
+  title?: string;
+  author?: string;
+  pageCount?: number;
+  characterCount: number;
+};
+
+// Rough tag stripper for XML-based containers (PPTX slides, XLSX strings,
+// EPUB documents) — good enough to pull readable text without a full HTML parser.
+const stripTags = (xml: string): string => {
+  return xml
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+// PDF: pdfjs-dist is ESM-only, hence the dynamic import (the project compiles
+// to CommonJS). Text is read page-by-page with a `[page N]` marker preserved so
+// the chunking pipeline can attach page-level citation locators later.
+const extractFromPdf = async (buffer: Buffer): Promise<string> => {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+
+  let text = '';
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item) => (item as { str?: string }).str ?? '')
+      .join(' ');
+    text += `[page ${i}]\n${pageText}\n\n`;
+  }
+
+  return text.trim();
+};
+
+// DOCX: mammoth converts the document to plain text directly from a buffer.
+const extractFromDocx = async (buffer: Buffer): Promise<string> => {
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value.trim();
+};
+
+// Markdown: parsed to an mdast tree (remark supports GitHub-flavored markdown),
+// then flattened to plain text via mdast-util-to-string. These packages are
+// ESM-only, hence dynamic imports.
+const extractFromMarkdown = async (buffer: Buffer): Promise<string> => {
+  const { unified } = await import('unified');
+  const remarkParse = (await import('remark-parse')).default;
+  const remarkGfm = (await import('remark-gfm')).default;
+  const { toString } = await import('mdast-util-to-string');
+
+  const text = buffer.toString('utf8');
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(text);
+  return toString(tree as never).trim();
+};
+
+// Plain text (txt/csv): no parsing needed, just decode UTF-8.
+const extractFromPlainText = (buffer: Buffer): string => {
+  return buffer.toString('utf8').trim();
+};
+
+// PPTX: PowerPoint files are ZIP archives; slide text lives in
+// ppt/slides/slideN.xml. Extract text from each slide in page order.
+const extractFromPptx = async (buffer: Buffer): Promise<string> => {
+  const zip = await JSZip.loadAsync(buffer);
+  const slideNames = Object.keys(zip.files)
+    .filter((name) => /ppt\/slides\/slide\d+\.xml$/.test(name))
+    .sort(
+      (a, b) =>
+        Number(a.match(/slide(\d+)\.xml$/)?.[1]) -
+        Number(b.match(/slide(\d+)\.xml$/)?.[1])
+    );
+
+  let text = '';
+  for (const name of slideNames) {
+    const file = zip.file(name);
+    if (!file) continue;
+    const xml = await file.async('string');
+    text += `${stripTags(xml)}\n`;
+  }
+  return text.trim();
+};
+
+const extractFromXlsx = async (buffer: Buffer): Promise<string> => {
+  const zip = await JSZip.loadAsync(buffer);
+  const shared = zip.file('xl/sharedStrings.xml');
+  if (!shared) return '';
+
+  const xml = await shared.async('string');
+  const cells =
+    xml
+      .match(/<si>[\s\S]*?<\/si>/g)
+      ?.map((si) => stripTags(si))
+      .filter(Boolean) ?? [];
+  return cells.join('\n').trim();
+};
+
+const extractFromEpub = async (buffer: Buffer): Promise<string> => {
+  const zip = await JSZip.loadAsync(buffer);
+  const entries = Object.values(zip.files).filter(
+    (file) => !file.dir && /\.(x?html|htm)$/i.test(file.name)
+  );
+
+  const limit = pLimit(4);
+  const parts = await Promise.all(
+    entries.map((entry) =>
+      limit(async () => {
+        const xml = await entry.async('string');
+        return stripTags(xml);
+      })
+    )
+  );
+  return parts.filter(Boolean).join('\n').trim();
+};
+
+// ---------------------------------------------------------------------------
+// SSRF protection for web extraction.
+//
+// `sourceUrl` is user-controlled, so we must never let fetch() reach an
+// internal address (loopback, link-local, cloud metadata, private ranges) —
+// either directly or via a redirect. The API boundary validates the scheme
+// (http/https) but not the destination, and automatic redirect following would
+// happily hop from a public URL onto an internal one.
+// ---------------------------------------------------------------------------
+
+const MAX_REDIRECTS = 5;
+// Per-hop timeout so a slow or hanging destination cannot stall the worker.
+const WEB_FETCH_TIMEOUT_MS = 15000;
+// Hard cap on a fetched HTML body, before it is parsed, so a huge page cannot
+// exhaust worker memory.
+const MAX_WEB_BODY_BYTES = 5 * 1024 * 1024; // 5 MB
+
+// IP ranges an ingestion worker must never connect to (loopback, private,
+// link-local incl. cloud metadata, and other non-routable/reserved ranges).
+// net.BlockList rejects IPv6 on this Node version, so ranges are matched
+// manually below.
+const ipv4ToBigInt = (ip: string): bigint => {
+  const [a, b, c, d] = ip.split('.').map(Number);
+  return (
+    (BigInt(a) << BigInt(24)) |
+    (BigInt(b) << BigInt(16)) |
+    (BigInt(c) << BigInt(8)) |
+    BigInt(d)
+  );
+};
+
+// Parse an IPv6 address into a 128-bit value. Handles `::` compression and an
+// embedded dotted-quad IPv4 group (e.g. ::ffff:127.0.0.1), which counts as the
+// final two hextets.
+const ipv6ToBigInt = (ip: string): bigint => {
+  const doubleColon = ip.indexOf('::');
+  const left = doubleColon === -1 ? ip : ip.slice(0, doubleColon);
+  const right = doubleColon === -1 ? '' : ip.slice(doubleColon + 2);
+
+  const expandDottedQuad = (parts: string[]): string[] => {
+    const hextets: string[] = [];
+    for (const part of parts) {
+      if (part.includes('.')) {
+        const [a, b, c, d] = part.split('.').map(Number);
+        hextets.push(((a << 8) | b).toString(16));
+        hextets.push(((c << 8) | d).toString(16));
+      } else {
+        hextets.push(part);
+      }
+    }
+    return hextets;
+  };
+
+  const leftParts = expandDottedQuad(
+    left ? left.split(':').filter(Boolean) : []
+  );
+  const rightParts = expandDottedQuad(
+    right ? right.split(':').filter(Boolean) : []
+  );
+  const missing = 8 - leftParts.length - rightParts.length;
+  const hextets = [...leftParts, ...Array(missing).fill('0'), ...rightParts];
+  let value = BigInt(0);
+  for (const h of hextets) {
+    value = (value << BigInt(16)) | BigInt(parseInt(h || '0', 16));
+  }
+  return value;
+};
+
+type IpRange = { network: bigint; bits: number; family: 4 | 6 };
+
+const blockedRanges: IpRange[] = [
+  { network: ipv4ToBigInt('0.0.0.0'), bits: 8, family: 4 }, // "this" network
+  { network: ipv4ToBigInt('10.0.0.0'), bits: 8, family: 4 }, // private
+  { network: ipv4ToBigInt('100.64.0.0'), bits: 10, family: 4 }, // carrier-grade NAT
+  { network: ipv4ToBigInt('127.0.0.0'), bits: 8, family: 4 }, // loopback
+  { network: ipv4ToBigInt('169.254.0.0'), bits: 16, family: 4 }, // link-local (metadata)
+  { network: ipv4ToBigInt('172.16.0.0'), bits: 12, family: 4 }, // private
+  { network: ipv4ToBigInt('192.168.0.0'), bits: 16, family: 4 }, // private
+  { network: ipv4ToBigInt('198.18.0.0'), bits: 15, family: 4 }, // benchmarking
+  { network: ipv4ToBigInt('224.0.0.0'), bits: 4, family: 4 }, // multicast
+  { network: ipv4ToBigInt('240.0.0.0'), bits: 4, family: 4 }, // reserved
+  { network: ipv6ToBigInt('::'), bits: 128, family: 6 }, // unspecified
+  { network: ipv6ToBigInt('::1'), bits: 128, family: 6 }, // loopback
+  { network: ipv6ToBigInt('fc00::'), bits: 7, family: 6 }, // unique local addresses
+  { network: ipv6ToBigInt('fe80::'), bits: 10, family: 6 }, // link-local
+  { network: ipv6ToBigInt('2001:db8::'), bits: 32, family: 6 }, // documentation
+  { network: ipv6ToBigInt('100::'), bits: 64, family: 6 } // discard-only
+];
+
+// Reduce IPv4-mapped IPv6 (::ffff:0:0/96) to the embedded IPv4 dotted quad so
+// the IPv4 blocked-range checks apply. This catches every representation —
+// dotted quad (::ffff:127.0.0.1), canonical hex (::ffff:7f00:1), and full
+// (0:0:0:0:0:ffff:7f00:1) — which a dotted-quad-only regex would miss. Other
+// addresses are returned unchanged.
+const normalizeIp = (ip: string): string => {
+  const lower = ip.toLowerCase();
+  if (isIP(lower) !== 6) {
+    return lower;
+  }
+  const value = ipv6ToBigInt(lower);
+  if (value >> BigInt(32) === BigInt(0xffff)) {
+    const v4 = value & BigInt(0xffffffff);
+    return [
+      Number((v4 >> BigInt(24)) & BigInt(0xff)),
+      Number((v4 >> BigInt(16)) & BigInt(0xff)),
+      Number((v4 >> BigInt(8)) & BigInt(0xff)),
+      Number(v4 & BigInt(0xff))
+    ].join('.');
+  }
+  return lower;
+};
+
+const isBlockedIp = (ip: string): boolean => {
+  const normalized = normalizeIp(ip);
+  const family = isIP(normalized);
+  if (!family) {
+    return false;
+  }
+  const maxBits = family === 4 ? 32 : 128;
+  const value =
+    family === 4 ? ipv4ToBigInt(normalized) : ipv6ToBigInt(normalized);
+  return blockedRanges.some((range) => {
+    if (range.family !== family) {
+      return false;
+    }
+    const mask =
+      range.bits === 0
+        ? BigInt(0)
+        : ((BigInt(1) << BigInt(range.bits)) - BigInt(1)) <<
+          BigInt(maxBits - range.bits);
+    return (value & mask) === (range.network & mask);
+  });
+};
+
+// Reject a URL whose scheme isn't http(s) or whose host resolves to any blocked
+// (internal) address. The lookup happens before fetch(), so a hostile hostname
+// could still flip its DNS answer afterwards (DNS rebinding); pinning the
+// connection to the validated IP is the fully robust defence and is out of
+// scope for this minimal fix.
+type ResolvedHost = {
+  hostname: string;
+  ip: string;
+  family: number;
+};
+
+// Resolve and validate a URL's host, returning the exact IP the connection must
+// be pinned to. The address is resolved HERE and then forced at connect time
+// (via a lookup override), so a hostile hostname cannot flip its DNS answer
+// between validation and connection (DNS rebinding) to route the request to a
+// private address.
+const resolveAndValidate = async (rawUrl: string): Promise<ResolvedHost> => {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Only http(s) URLs are allowed.');
+  }
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!hostname) {
+    throw new Error('URL is missing a host.');
+  }
+
+  if (isIP(hostname)) {
+    if (isBlockedIp(hostname)) {
+      throw new Error(`Blocked destination: ${hostname}`);
+    }
+    return { hostname, ip: hostname, family: isIP(hostname) };
+  }
+
+  let addresses: { address: string; family: number }[];
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    throw new Error(`Failed to resolve host: ${hostname}`);
+  }
+
+  if (addresses.length === 0 || addresses.some((a) => isBlockedIp(a.address))) {
+    throw new Error(
+      `Destination resolves to a blocked (private/loopback/link-local) address: ${hostname}`
+    );
+  }
+
+  return {
+    hostname,
+    ip: addresses[0].address,
+    family: addresses[0].family
+  };
+};
+
+// Read a fetch response body into a Buffer, hard-capping it so a huge page
+// cannot exhaust worker memory before JSDOM parsing. A Content-Length header
+// over the limit is rejected up front; streamed/chunked bodies are capped as
+// they arrive. If the caller's per-hop deadline (abort signal) fires mid-body,
+// a clear timeout error is thrown instead of returning a truncated body.
+const readBodyWithLimit = async (
+  response: http.IncomingMessage,
+  maxBytes: number,
+  signal?: AbortSignal,
+  timeoutMessage = 'Request timed out.'
+): Promise<Buffer> => {
+  const declared = Number(response.headers['content-length']);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    response.destroy(); // close the socket immediately (no keep-alive reuse)
+    throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  for await (const chunk of response) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > maxBytes) {
+      response.destroy();
+      throw new Error(`Response body exceeds the ${maxBytes} byte limit.`);
+    }
+    chunks.push(buf);
+  }
+
+  // The deadline can abort the request mid-body (socket torn down → the
+  // stream just ends early); surface that as a timeout rather than parsing a
+  // truncated page as if it succeeded.
+  if (signal?.aborted) {
+    throw new Error(timeoutMessage);
+  }
+
+  return Buffer.concat(chunks);
+};
+
+// Result of one pinned HTTP(S) hop. The per-hop deadline (timer + abort
+// listener) stays active after the response headers arrive, so the caller must
+// call `cleanup()` once the body has been fully consumed (or the hop fails).
+type Hop = {
+  response: http.IncomingMessage;
+  cleanup: () => void;
+  signal: AbortSignal;
+};
+
+// Perform a single HTTP(S) hop pinned to a pre-validated IP. The `lookup`
+// override forces the socket to connect to `resolved.ip` for the expected
+// hostname, so DNS cannot be re-resolved to a private address at connect time
+// (DNS rebinding). The request keeps the real hostname for the Host header and
+// TLS SNI, so virtual hosting and certificate validation still work. Aborts the
+// hop if it exceeds WEB_FETCH_TIMEOUT_MS — the deadline covers header receipt
+// AND body consumption (see readBodyWithLimit).
+const fetchHop = async (url: string): Promise<Hop> => {
+  const parsed = new URL(url);
+  const { hostname, ip, family } = await resolveAndValidate(url);
+  const transport = parsed.protocol === 'https:' ? https : http;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+  let request: http.ClientRequest | undefined;
+  const onAbort = () => request?.destroy(new Error('timed out'));
+  controller.signal.addEventListener('abort', onAbort);
+  const cleanup = () => {
+    clearTimeout(timer);
+    controller.signal.removeEventListener('abort', onAbort);
+  };
+
+  try {
+    const response = await new Promise<http.IncomingMessage>(
+      (resolve, reject) => {
+        request = transport.request(
+          {
+            hostname,
+            port: parsed.port ? Number(parsed.port) : undefined,
+            path: `${parsed.pathname}${parsed.search}`,
+            method: 'GET',
+            servername: hostname,
+            // No connection pooling: each hop gets a fresh socket that closes
+            // once its response is consumed, so no lingering keep-alive sockets.
+            agent: false,
+            headers: { 'User-Agent': 'Folio-RAG/1.0' },
+            lookup: (
+              lookupHost: string,
+              _opts: unknown,
+              cb: (
+                err: Error | null,
+                addresses?: { address: string; family: number }[]
+              ) => void
+            ) => {
+              if (lookupHost.toLowerCase() !== hostname) {
+                cb(new Error('Unexpected hostname during lookup.'));
+                return;
+              }
+              cb(null, [{ address: ip, family }]);
+            }
+          },
+          (res) => resolve(res)
+        );
+        request.on('error', reject);
+        request.end();
+      }
+    );
+    // Success: keep the deadline + abort listener active so body consumption is
+    // still bounded. The caller invokes `cleanup()` after the body is read.
+    return { response, cleanup, signal: controller.signal };
+  } catch (error) {
+    cleanup(); // hop failed (including timeout) — the deadline is over
+    if (controller.signal.aborted) {
+      throw new Error(`Request to ${url} timed out.`);
+    }
+    throw error;
+  }
+};
+
+// Fetch with manual redirect handling: every hop (the initial URL and each
+// Location target) is resolved + validated and its connection pinned, redirects
+// are bounded to prevent loops, and each hop's deadline covers header receipt
+// and body consumption. Redirect bodies are drained with a size cap. Returns
+// the first non-3xx hop.
+const fetchApproved = async (urlString: string): Promise<Hop> => {
+  let current = urlString;
+
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    const hop = await fetchHop(current);
+
+    const status = hop.response.statusCode ?? 0;
+    if (status >= 300 && status < 400 && hop.response.headers.location) {
+      const next = new URL(hop.response.headers.location, current).toString();
+      // Drain (capped) + release the socket for the redirect body, then stop
+      // this hop's deadline before moving to the next one.
+      try {
+        await readBodyWithLimit(
+          hop.response,
+          MAX_WEB_BODY_BYTES,
+          hop.signal,
+          `Request to ${current} timed out.`
+        ).catch(() => {});
+      } finally {
+        hop.cleanup();
+      }
+      if (next === current) {
+        throw new Error('Redirect loop detected.');
+      }
+      current = next;
+      continue;
+    }
+
+    return hop;
+  }
+
+  throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
+};
+
+const extractFromWeb = async (
+  url: string
+): Promise<{
+  content: string;
+  title?: string;
+  author?: string;
+}> => {
+  // Fetch the article, render it with jsdom, then run Mozilla's Readability to
+  // strip navigation/ads and keep only the main article text. Also extracts the
+  // page <title> and <meta name="author"> so they can fill blank source fields.
+  const hop = await fetchApproved(url);
+  try {
+    const status = hop.response.statusCode ?? 0;
+    if (status < 200 || status >= 300) {
+      // Drain (capped) the error body so the socket is released back to the pool.
+      await readBodyWithLimit(
+        hop.response,
+        MAX_WEB_BODY_BYTES,
+        hop.signal,
+        `Request to ${url} timed out.`
+      ).catch(() => {});
+      throw new Error(`Failed to fetch URL: ${status}`);
+    }
+    const html = (
+      await readBodyWithLimit(
+        hop.response,
+        MAX_WEB_BODY_BYTES,
+        hop.signal,
+        `Request to ${url} timed out.`
+      )
+    ).toString('utf8');
+    const dom = new JSDOM(html, { url });
+
+    const { Readability } = await import('@mozilla/readability');
+    const article = new Readability(dom.window.document).parse();
+
+    const title =
+      article?.title ||
+      dom.window.document.querySelector('title')?.textContent?.trim() ||
+      undefined;
+    const author =
+      dom.window.document
+        .querySelector('meta[name="author"]')
+        ?.getAttribute('content')
+        ?.trim() || undefined;
+
+    return {
+      content: (article?.textContent || '').trim(),
+      title,
+      author
+    };
+  } finally {
+    // The deadline is only stopped once the body is fully consumed (or the hop
+    // failed above) — never at header receipt.
+    hop.cleanup();
+  }
+};
+
+const extractFromManual = (content: string): string => content.trim();
+
+// Strip control characters (0x00 etc.) that some extractors emit (e.g. pdfjs
+// from embedded fonts). PostgreSQL rejects null bytes in TEXT columns, so this
+// MUST run before content is written back to the source.
+const sanitizeText = (text: string): string => {
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+};
+
+// Dispatcher: picks the extractor based on source type and returns sanitized
+// text + metadata. File sources are downloaded from MinIO first.
+export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
+  if (input.sourceType === 'Manual') {
+    const content = sanitizeText(extractFromManual(input.content || ''));
+    return { content, characterCount: content.length };
+  }
+
+  if (input.sourceType === 'Web') {
+    if (!input.sourceUrl) {
+      throw new Error('Web source is missing a URL.');
+    }
+    const { content, title, author } = await extractFromWeb(input.sourceUrl);
+    const cleanContent = sanitizeText(content);
+    return {
+      content: cleanContent,
+      title,
+      author,
+      characterCount: cleanContent.length
+    };
+  }
+
+  if (!input.sourceUrl) {
+    throw new Error('File source is missing an object key.');
+  }
+
+  const buffer = await downloadObject(input.sourceUrl);
+  const ext = getFileExtension(input.sourceUrl) ?? '';
+  let content = '';
+
+  switch (ext) {
+    case 'pdf':
+      content = await extractFromPdf(buffer);
+      break;
+    case 'docx':
+      content = await extractFromDocx(buffer);
+      break;
+    case 'md':
+      content = await extractFromMarkdown(buffer);
+      break;
+    case 'pptx':
+      content = await extractFromPptx(buffer);
+      break;
+    case 'xlsx':
+      content = await extractFromXlsx(buffer);
+      break;
+    case 'epub':
+      content = await extractFromEpub(buffer);
+      break;
+    case 'txt':
+    case 'csv':
+      content = extractFromPlainText(buffer);
+      break;
+    default:
+      throw new Error(`Unsupported file extension for extraction: .${ext}`);
+  }
+
+  if (!content) {
+    throw new Error('No extractable text found in the file.');
+  }
+
+  const cleanContent = sanitizeText(content);
+  return { content: cleanContent, characterCount: cleanContent.length };
+};
+
+export default { extract };

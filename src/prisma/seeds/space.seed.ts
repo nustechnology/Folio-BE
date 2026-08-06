@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+
 import bcrypt from 'bcryptjs';
 import { env } from '~/config/enviroment';
 import prisma from '~/prisma/prisma.client';
@@ -26,6 +28,15 @@ async function main() {
     console.log('Created user');
   } else {
     console.log('Using existing user');
+  }
+
+  const legacyCount = await prisma.researchSpace.deleteMany({
+    where: { ownerId: user.id, id: { startsWith: 'seed-space-' } }
+  });
+  if (legacyCount.count > 0) {
+    console.log(
+      `Removed ${legacyCount.count} legacy space(s) with non-UUID ids.`
+    );
   }
 
   const spaces = [
@@ -63,7 +74,12 @@ async function main() {
       now - Math.max(0, daysAgo - 1) * 24 * 60 * 60 * 1000
     );
 
-    const spaceId = `seed-space-${i}`;
+    const existing = await prisma.researchSpace.findFirst({
+      where: { ownerId: user.id, name: s.name }
+    });
+
+    const spaceId = randomUUID();
+
     const spaceData = {
       ownerId: user.id,
       name: s.name,
@@ -72,10 +88,6 @@ async function main() {
       updatedAt,
       lastOpenedAt: updatedAt
     };
-
-    const existing = await prisma.researchSpace.findUnique({
-      where: { id: spaceId }
-    });
 
     await prisma.researchSpace.upsert({
       where: { id: spaceId },

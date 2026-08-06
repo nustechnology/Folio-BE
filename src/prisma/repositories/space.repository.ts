@@ -73,6 +73,12 @@ const findByNameAndOwner = async (ownerId: string, name: string) => {
   });
 };
 
+const findByIdAndOwner = async (spaceId: string, ownerId: string) => {
+  return prisma.researchSpace.findFirst({
+    where: { id: spaceId, ownerId }
+  });
+};
+
 const create = async (data: {
   ownerId: string;
   name: string;
@@ -111,5 +117,6 @@ export default {
   findManyByOwner,
   findByIdAndOwner,
   findByNameAndOwner,
+  findByIdAndOwner,
   create
 };
