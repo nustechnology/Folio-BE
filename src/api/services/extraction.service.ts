@@ -4,6 +4,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 import { JSDOM } from 'jsdom';
+import { marked } from 'marked';
 
 import { getFileExtension } from '~/api/utils/file.util';
 import { downloadObject } from '~/api/utils/minio.util';
@@ -335,8 +336,14 @@ const fetchHop = async (url: string): Promise<Hop> => {
             servername: hostname,
             // No connection pooling: each hop gets a fresh socket that closes
             // once its response is consumed, so no lingering keep-alive sockets.
-            agent: false,
-            headers: { 'User-Agent': 'Folio-RAG/1.0' },
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              Accept:
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+              Connection: 'close'
+            },
             lookup: (
               lookupHost: string,
               _opts: unknown,
@@ -417,55 +424,175 @@ const extractFromWeb = async (
   title?: string;
   author?: string;
 }> => {
-  // Fetch the article, render it with jsdom, then run Mozilla's Readability to
-  // strip navigation/ads and keep only the main article text. Also extracts the
-  // page <title> and <meta name="author"> so they can fill blank source fields.
-  const hop = await fetchApproved(url);
-  try {
-    const status = hop.response.statusCode ?? 0;
-    if (status < 200 || status >= 300) {
-      // Drain (capped) the error body so the socket is released back to the pool.
-      await readBodyWithLimit(
-        hop.response,
-        MAX_WEB_BODY_BYTES,
-        hop.signal,
-        `Request to ${url} timed out.`
-      ).catch(() => {});
-      throw new Error(`Failed to fetch URL: ${status}`);
-    }
-    const html = (
-      await readBodyWithLimit(
-        hop.response,
-        MAX_WEB_BODY_BYTES,
-        hop.signal,
-        `Request to ${url} timed out.`
-      )
-    ).toString('utf8');
-    const dom = new JSDOM(html, { url });
+  let contentText = '';
+  let contentHtml = '';
+  let title: string | undefined;
+  let author: string | undefined;
+  let fetchedViaJina = false;
 
+  // 1. Try Jina Reader API first to get fully-rendered Markdown (executes client-side JS and cleans page)
+  try {
+    logger.info('[Extractor] Fetching page markdown via Jina Reader API', {
+      url
+    });
+    // Encode target URL so query params like ?query=1&item=2 are preserved!
+    const jinaUrl = `https://r.jina.ai/${encodeURIComponent(url)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+
+    const response = await new Promise<http.IncomingMessage>(
+      (resolve, reject) => {
+        const parsed = new URL(jinaUrl);
+        const transport = parsed.protocol === 'https:' ? https : http;
+        const req = transport.request(
+          {
+            hostname: parsed.hostname,
+            port: parsed.port ? Number(parsed.port) : undefined,
+            path: `${parsed.pathname}${parsed.search}`,
+            method: 'GET',
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'X-No-Cache': 'true',
+              Connection: 'close'
+            }
+          },
+          (res) => resolve(res)
+        );
+        req.on('error', reject);
+        req.end();
+      }
+    );
+
+    try {
+      const status = response.statusCode ?? 0;
+      if (status === 200) {
+        const markdown = (
+          await readBodyWithLimit(
+            response,
+            MAX_WEB_BODY_BYTES,
+            controller.signal,
+            `Request to Jina Reader timed out.`
+          )
+        ).toString('utf8');
+
+        if (markdown.trim()) {
+          // Parse title from Jina header metadata
+          const titleMatch = markdown.match(/^Title:\s*(.*)/i);
+          if (titleMatch) {
+            title = titleMatch[1].trim();
+          }
+
+          // Compile Jina's high-quality Markdown to HTML
+          const compiledHtml = await marked.parse(markdown);
+
+          // Use JSDOM to extract clean, un-marked plaintext for search indexing
+          const jinaDom = new JSDOM(compiledHtml);
+          contentText = (
+            jinaDom.window.document.body?.textContent || ''
+          ).trim();
+          contentHtml = ParseService.injectStyles(compiledHtml);
+
+          fetchedViaJina = true;
+          logger.info(
+            '[Extractor] Successfully fetched and parsed markdown from Jina Reader'
+          );
+        }
+      } else {
+        logger.warn('[Extractor] Jina Reader returned non-200 status', {
+          status
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    logger.warn(
+      '[Extractor] Jina Reader API failed, falling back to local crawl',
+      { message: err.message }
+    );
+  }
+
+  // 2. Direct local fetch fallback if Jina failed or returned empty content
+  if (!fetchedViaJina) {
+    logger.info('[Extractor] Fetching raw HTML locally', { url });
+    const hop = await fetchApproved(url);
+    let html = '';
+    try {
+      const status = hop.response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        await readBodyWithLimit(
+          hop.response,
+          MAX_WEB_BODY_BYTES,
+          hop.signal,
+          `Request to ${url} timed out.`
+        ).catch(() => {});
+        throw new Error(`Failed to fetch URL: ${status}`);
+      }
+      html = (
+        await readBodyWithLimit(
+          hop.response,
+          MAX_WEB_BODY_BYTES,
+          hop.signal,
+          `Request to ${url} timed out.`
+        )
+      ).toString('utf8');
+    } finally {
+      hop.cleanup();
+    }
+
+    const dom = new JSDOM(html, { url });
     const { Readability } = await import('@mozilla/readability');
     const article = new Readability(dom.window.document).parse();
 
-    const title =
+    title =
       article?.title ||
       dom.window.document.querySelector('title')?.textContent?.trim() ||
       undefined;
-    const author =
+    author =
       dom.window.document
         .querySelector('meta[name="author"]')
         ?.getAttribute('content')
         ?.trim() || undefined;
 
-    return {
-      content: (article?.textContent || '').trim(),
-      title,
-      author
-    };
-  } finally {
-    // The deadline is only stopped once the body is fully consumed (or the hop
-    // failed above) — never at header receipt.
-    hop.cleanup();
+    const readabilityText = (article?.textContent || '').trim();
+    const readabilityHtml = article?.content || undefined;
+
+    // Extract all raw body text/HTML to ensure we don't miss anything (e.g. dynamic elements, side content)
+    const document = dom.window.document;
+    const toRemove = document.querySelectorAll(
+      'script, style, noscript, svg, iframe, nav, footer, header'
+    );
+    toRemove.forEach((el) => el.remove());
+    const bodyText = (document.body?.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const bodyHtml = document.body?.innerHTML || undefined;
+
+    // If Readability was too aggressive (extracted less than 30% of the body text), use raw body text fallback
+    if (!readabilityText || readabilityText.length < bodyText.length * 0.3) {
+      logger.info(
+        '[Extractor] Readability was too aggressive or empty — using raw body text fallback'
+      );
+      contentText = bodyText;
+      contentHtml = bodyHtml || '';
+    } else {
+      contentText = readabilityText;
+      contentHtml = readabilityHtml || '';
+    }
+
+    if (contentHtml) {
+      contentHtml = ParseService.injectStyles(contentHtml);
+    }
   }
+
+  return {
+    content: contentText,
+    html: contentHtml || undefined,
+    title,
+    author
+  };
 };
 
 const extractFromManual = (content: string): string => content.trim();
