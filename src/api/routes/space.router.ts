@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import SpaceController from '~/api/controllers/space.controller';
+import NoteRouter from '~/api/routes/note.router';
 import { auth } from '~/api/middlewares/auth.middleware';
 import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import {
@@ -52,5 +53,7 @@ router.delete(
   validateParams(spaceIdParamsSchema),
   asyncHandler(SpaceController.remove)
 );
+
+router.use('/:spaceId/notes', NoteRouter);
 
 export default router;
