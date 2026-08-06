@@ -1141,6 +1141,89 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/spaces/{spaceId}/notes/{noteId}/convert-to-source': {
+      post: {
+        tags: ['Notes'],
+        summary: 'Convert a note to a source',
+        description:
+          "Creates a `Manual` source holding a static plain-text snapshot of the note's content, linked back to the note by `originalNoteId`, and enqueues it for ingestion. The snapshot is taken from the stored note — the request body carries no content, only an optional title override — and never re-read afterwards, so editing or deleting the note leaves the source untouched. The note itself stays excluded from AI chat retrieval; the source is the retrievable artifact. A note can be converted only once.",
+        operationId: 'convertNoteToSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            $ref: '#/components/parameters/NoteIdPath'
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ConvertNoteRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '201': {
+            description: 'Source created from the note and queued for ingestion',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error (space id or note id is not a UUID, or the title override is over 255 characters)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found (code: SPACE_NOT_FOUND) or note not found in that space (code: NOTE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '409': {
+            description:
+              'The note already has a source snapshot (code: NOTE_ALREADY_CONVERTED)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
     '/api/v1/users/{id}': {
       get: {
         tags: ['Users'],
@@ -1682,6 +1765,21 @@ export const openApiDocument = {
             description:
               'New rich-text content (HTML). Sanitized and re-measured exactly as on create.',
             example: '<p>Revised: the scaling break appears at <em>7B</em>.</p>'
+          }
+        }
+      },
+      ConvertNoteRequest: {
+        type: 'object',
+        additionalProperties: false,
+        description:
+          "Optional overrides for the created source. The body may be omitted entirely. Content is never accepted here — the snapshot is taken from the stored note.",
+        properties: {
+          title: {
+            type: 'string',
+            maxLength: 255,
+            description:
+              "Title for the new source. Blank or omitted keeps the note's own title.",
+            example: 'Transformer scaling — field notes'
           }
         }
       },

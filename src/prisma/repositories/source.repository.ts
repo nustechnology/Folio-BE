@@ -60,6 +60,15 @@ const countBySpaceId = async (spaceId: string) => {
   return prisma.source.count({ where: { researchSpaceId: spaceId } });
 };
 
+/**
+ * A note has at most one snapshot source: `originalNoteId` is only an index, not
+ * unique, so the "already converted" rule is enforced here rather than by the
+ * database.
+ */
+const findByOriginalNoteId = async (originalNoteId: string) => {
+  return prisma.source.findFirst({ where: { originalNoteId } });
+};
+
 const findManyByOwnerId = async (ownerId: string) => {
   return prisma.source.findMany({
     where: {
@@ -77,5 +86,6 @@ export default {
   update,
   deleteById,
   countBySpaceId,
+  findByOriginalNoteId,
   findManyByOwnerId
 };

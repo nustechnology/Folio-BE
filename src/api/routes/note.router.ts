@@ -9,6 +9,7 @@ import {
   validateQuery
 } from '~/api/middlewares/validation.middleware';
 import {
+  convertNoteSchema,
   createNoteSchema,
   listNotesQuerySchema,
   noteParamsSchema,
@@ -48,6 +49,14 @@ router.patch(
   validateParams(noteParamsSchema),
   validateBody(updateNoteSchema),
   asyncHandler(NoteController.update)
+);
+
+router.post(
+  '/:noteId/convert-to-source',
+  auth,
+  validateParams(noteParamsSchema),
+  validateBody(convertNoteSchema),
+  asyncHandler(NoteController.convertToSource)
 );
 
 router.delete(

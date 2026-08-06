@@ -2,7 +2,9 @@ import { StatusCodes } from 'http-status-codes';
 
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
+import SourceService from '~/api/services/source.service';
 import {
+  ConvertNoteInput,
   CreateNoteInput,
   ListNotesOptions,
   UpdateNoteInput
@@ -202,6 +204,37 @@ const update = async (
   return toDetail(note);
 };
 
+/**
+ * Promote a note to a [[source]] (REQ-022). The note itself is untouched and
+ * stays out of retrieval — the snapshot source is the retrievable artifact.
+ *
+ * `toPlainText` is the projection that goes into the source: the ingestion
+ * pipeline treats `Manual` content as text, so handing it markup would index
+ * tag names as evidence.
+ */
+const convertToSource = async (
+  ownerId: string,
+  spaceId: string,
+  noteId: string,
+  input: ConvertNoteInput
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const note = await requireNoteInSpace(noteId, spaceId);
+
+  return SourceService.createFromNote(
+    spaceId,
+    ownerId,
+    {
+      id: note.id,
+      title: note.title,
+      content: toPlainText(note.content),
+      isAssistantAuthored: note.originType === OriginType.SavedAssistantAnswer
+    },
+    { title: input.title }
+  );
+};
+
 const remove = async (ownerId: string, spaceId: string, noteId: string) => {
   await assertSpaceAccess(spaceId, ownerId);
 
@@ -213,5 +246,6 @@ export default {
   getById,
   create,
   update,
+  convertToSource,
   remove
 };

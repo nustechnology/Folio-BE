@@ -1,6 +1,10 @@
 import Joi from 'joi';
 
-import { NOTE, PAGINATION } from '~/api/utils/constants';
+import {
+  NOTE,
+  PAGINATION,
+  SOURCE_TITLE_MAX_LENGTH
+} from '~/api/utils/constants';
 import { OriginType } from '~/generated/prisma/client';
 
 export const spaceIdParamSchema = Joi.object({
@@ -59,6 +63,23 @@ export const createNoteSchema = Joi.object({
       'string.max': 'Content exceeds the maximum allowed size'
     })
 });
+
+/**
+ * Conversion carries no content: the snapshot is read from the stored note. The
+ * optional title is bounded by the *source* title limit, since that is the
+ * column it lands in; a blank one falls back to the note's own title.
+ */
+export const convertNoteSchema = Joi.object({
+  title: Joi.string()
+    .trim()
+    .allow('')
+    .max(SOURCE_TITLE_MAX_LENGTH)
+    .optional()
+    .messages({ 'string.max': 'Title is too long' })
+})
+  /* A request with no body at all is the normal case — validate it to `{}`
+     rather than letting `undefined` reach the controller. */
+  .default({});
 
 /**
  * Unlike create, a title sent here MUST NOT be blank. Create substitutes

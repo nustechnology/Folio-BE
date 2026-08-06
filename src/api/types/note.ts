@@ -37,3 +37,12 @@ export type UpdateNoteInput = {
   title?: string;
   content?: string;
 };
+
+/**
+ * Converting a note takes nothing from the note but a title override: the
+ * snapshot content is read from the stored note, never from the request, so a
+ * client cannot pass off arbitrary text as "the note that was converted".
+ */
+export type ConvertNoteInput = {
+  title?: string;
+};

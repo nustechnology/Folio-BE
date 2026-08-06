@@ -4,6 +4,7 @@ import { StatusCodes } from 'http-status-codes';
 import { paginatedResponse, successResponse } from '~/api/routes/response';
 import NoteService from '~/api/services/note.service';
 import {
+  ConvertNoteInput,
   NoteOriginFilter,
   NoteSort,
   UpdateNoteInput
@@ -67,6 +68,29 @@ const update = async (req: Request, res: Response) => {
 };
 
 /**
+ * Answers `201` with the created source, not with the note: the note is
+ * unchanged by the conversion, and the caller's next move is to watch the new
+ * source through processing.
+ */
+const convertToSource = async (req: Request, res: Response) => {
+  const { spaceId, noteId } = req.params as {
+    spaceId: string;
+    noteId: string;
+  };
+  const { title } = (req.body ?? {}) as ConvertNoteInput;
+  const source = await NoteService.convertToSource(
+    req.userId!,
+    spaceId,
+    noteId,
+    { title }
+  );
+
+  return res
+    .status(StatusCodes.CREATED)
+    .json({ status: 'success', data: { source } });
+};
+
+/**
  * Answers `200` with the standard envelope rather than `204`, so the response
  * shape matches every other route and the web client's JSON parsing.
  */
@@ -85,5 +109,6 @@ export default {
   get,
   create,
   update,
+  convertToSource,
   remove
 };
