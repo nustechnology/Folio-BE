@@ -1314,6 +1314,18 @@ export const openApiDocument = {
             }
           },
           {
+            name: 'origin',
+            in: 'query',
+            required: false,
+            description:
+              'Filter by how the note came to exist. `all` applies no filter.',
+            schema: {
+              type: 'string',
+              enum: ['all', 'UserCreated', 'SavedAssistantAnswer'],
+              default: 'all'
+            }
+          },
+          {
             name: 'page',
             in: 'query',
             required: false,
@@ -1388,14 +1400,7 @@ export const openApiDocument = {
             $ref: '#/components/parameters/SpaceIdPath'
           },
           {
-            name: 'noteId',
-            in: 'path',
-            required: true,
-            description: 'Note ID',
-            schema: {
-              type: 'string',
-              format: 'uuid'
-            }
+            $ref: '#/components/parameters/NoteIdPath'
           }
         ],
         responses: {
@@ -1425,6 +1430,218 @@ export const openApiDocument = {
           '404': {
             description:
               'Space not found (code: SPACE_NOT_FOUND) or note not found in that space (code: NOTE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
+      patch: {
+        tags: ['Notes'],
+        summary: 'Update a note',
+        description:
+          'Updates a note\'s title and/or content. At least one field is required. Content is re-sanitized and re-measured exactly as on create, and the plain-text search projection is rewritten with it. Unlike create, a title sent here cannot be blank — the "Untitled Note" fallback applies only when a note is first saved. A note\'s origin (`originType`, `originConversationId`, `originMessageId`) is not editable.',
+        operationId: 'updateNote',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            $ref: '#/components/parameters/NoteIdPath'
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/UpdateNoteRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Note updated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/NoteSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error: empty body, blank title, title over 150 characters, empty content (code: NOTE_CONTENT_EMPTY), or content over 20,000 plain-text characters (code: NOTE_CONTENT_TOO_LONG)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found (code: SPACE_NOT_FOUND) or note not found in that space (code: NOTE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
+      delete: {
+        tags: ['Notes'],
+        summary: 'Delete a note',
+        description:
+          'Deletes a note and its citation links. Citations themselves belong to their source and are not deleted. A source that was converted from this note keeps its snapshotted content and only loses its back-reference to the note.',
+        operationId: 'deleteNote',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            $ref: '#/components/parameters/NoteIdPath'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Note deleted successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/DeleteNoteSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error (space id or note id is not a UUID)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found (code: SPACE_NOT_FOUND) or note not found in that space (code: NOTE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}/notes/{noteId}/convert-to-source': {
+      post: {
+        tags: ['Notes'],
+        summary: 'Convert a note to a source',
+        description:
+          "Creates a `Manual` source holding a static plain-text snapshot of the note's content, linked back to the note by `originalNoteId`, and enqueues it for ingestion. The snapshot is taken from the stored note — the request body carries no content, only an optional title override — and never re-read afterwards, so editing or deleting the note leaves the source untouched. The note itself stays excluded from AI chat retrieval; the source is the retrievable artifact. A note can be converted only once.",
+        operationId: 'convertNoteToSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            $ref: '#/components/parameters/NoteIdPath'
+          }
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/ConvertNoteRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '201': {
+            description: 'Source created from the note and queued for ingestion',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error (space id or note id is not a UUID, or the title override is over 255 characters)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space not found (code: SPACE_NOT_FOUND) or note not found in that space (code: NOTE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '409': {
+            description:
+              'The note already has a source snapshot (code: NOTE_ALREADY_CONVERTED)',
             content: {
               'application/json': {
                 schema: {
@@ -1498,6 +1715,16 @@ export const openApiDocument = {
         in: 'path',
         required: true,
         description: 'Research space ID',
+        schema: {
+          type: 'string',
+          format: 'uuid'
+        }
+      },
+      NoteIdPath: {
+        name: 'noteId',
+        in: 'path',
+        required: true,
+        description: 'Note ID',
         schema: {
           type: 'string',
           format: 'uuid'
@@ -2024,6 +2251,65 @@ export const openApiDocument = {
               'Rich-text content (HTML). Sanitized on save; its plain-text projection must be 1-20,000 characters and the raw HTML must not exceed 200,000 characters.',
             example:
               '<p>Scaling laws hold across <strong>three</strong> orders of magnitude.</p>'
+          }
+        }
+      },
+      UpdateNoteRequest: {
+        type: 'object',
+        additionalProperties: false,
+        minProperties: 1,
+        description:
+          'At least one of `title` or `content` is required. Origin fields are not editable.',
+        properties: {
+          title: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 150,
+            description:
+              'New note title. Cannot be blank — unlike create, there is no "Untitled Note" fallback on update.',
+            example: 'Transformer scaling — revised'
+          },
+          content: {
+            type: 'string',
+            maxLength: 200000,
+            description:
+              'New rich-text content (HTML). Sanitized and re-measured exactly as on create.',
+            example: '<p>Revised: the scaling break appears at <em>7B</em>.</p>'
+          }
+        }
+      },
+      ConvertNoteRequest: {
+        type: 'object',
+        additionalProperties: false,
+        description:
+          "Optional overrides for the created source. The body may be omitted entirely. Content is never accepted here — the snapshot is taken from the stored note.",
+        properties: {
+          title: {
+            type: 'string',
+            maxLength: 255,
+            description:
+              "Title for the new source. Blank or omitted keeps the note's own title.",
+            example: 'Transformer scaling — field notes'
+          }
+        }
+      },
+      DeleteNoteSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['deleted'],
+            properties: {
+              deleted: {
+                type: 'boolean',
+                enum: [true]
+              }
+            }
           }
         }
       },
