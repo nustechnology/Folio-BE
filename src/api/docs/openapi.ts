@@ -567,7 +567,7 @@ export const openApiDocument = {
           },
           '400': {
             description:
-              'Validation error (invalid URL, unsupported file, content length, or source type)',
+              'Validation error (invalid URL, unsupported file, content length, or source type). A file over the 50 MB upload limit answers here, not 413 (code: FILE_TOO_LARGE) — multer rejects it, and the JSON transport limit never applies to multipart.',
             content: {
               'application/json': {
                 schema: {
@@ -2355,6 +2355,10 @@ export const openApiDocument = {
           },
           code: {
             type: 'string',
+            /* The closed union from `src/api/errors/error-codes.ts`, in that
+               file's order. A client generating types from this treats an
+               unlisted code as invalid, so a partial list is worse than none —
+               keep the two in step whenever a code is added. */
             enum: [
               'TOKEN_MISSING',
               'TOKEN_EXPIRED',
@@ -2367,6 +2371,18 @@ export const openApiDocument = {
               'NOTE_NOT_FOUND',
               'NOTE_CONTENT_EMPTY',
               'NOTE_CONTENT_TOO_LONG',
+              'NOTE_ALREADY_CONVERTED',
+              'SOURCE_NOT_FOUND',
+              'SOURCE_NOT_FAILED',
+              'INVALID_FILE_EXTENSION',
+              'INVALID_FILE_SIGNATURE',
+              'FILE_TOO_LARGE',
+              'FILE_UPLOAD_FAILED',
+              'EMBEDDING_FAILED',
+              'NOTEBOOK_CONTENT_TOO_LONG',
+              'PAYLOAD_TOO_LARGE',
+              'MALFORMED_JSON',
+              'RATE_LIMIT_EXCEEDED',
               'INTERNAL_ERROR'
             ],
             nullable: true
