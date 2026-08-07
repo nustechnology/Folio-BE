@@ -22,6 +22,21 @@ const list = async (ownerId: string, options: ListOptions) => {
   };
 };
 
+const getById = async (spaceId: string, ownerId: string) => {
+  const space = await SpaceRepository.findByIdAndOwnerWithCounts(
+    spaceId,
+    ownerId
+  );
+  if (!space) {
+    throw new AppError(
+      'Space not found',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SPACE_NOT_FOUND
+    );
+  }
+  return space;
+};
+
 const create = async (
   ownerId: string,
   data: { name: string; researchObjective?: string }
@@ -43,5 +58,6 @@ const create = async (
 
 export default {
   list,
+  getById,
   create
 };

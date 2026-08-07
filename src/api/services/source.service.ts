@@ -13,6 +13,7 @@ import {
   verifyFileSignature
 } from '~/api/utils/signature.util';
 import { enqueueIngestion } from '~/queues/ingestion.queue';
+import PassageRepository from '~/prisma/repositories/passage.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 import UserRepository from '~/prisma/repositories/user.repository';
@@ -202,11 +203,31 @@ const list = async (
   options: ListSourceOptions
 ) => {
   await verifySpaceOwnership(spaceId, userId);
-  return SourceRepository.findBySpaceId(spaceId, options);
+  const { sources, totalCount } = await SourceRepository.findBySpaceId(
+    spaceId,
+    options
+  );
+  const totalPages = Math.ceil(totalCount / options.limit);
+  return {
+    sources,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      totalCount,
+      totalPages
+    }
+  };
 };
 
+/**
+ * Source detail carries its indexed passages: a citation deep-links into the
+ * reader as `#evidence-passage-{id}`, and without the passage list there is
+ * nothing to match that id against, so the highlight never lands.
+ */
 const getById = async (sourceId: string, userId: string) => {
-  return verifySourceOwnership(sourceId, userId);
+  const source = await verifySourceOwnership(sourceId, userId);
+  const passages = await PassageRepository.findBySourceId(sourceId);
+  return { ...source, passages };
 };
 
 const remove = async (sourceId: string, userId: string) => {

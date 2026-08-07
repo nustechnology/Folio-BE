@@ -40,6 +40,47 @@ const buildEvent = (
   return `data: ${JSON.stringify(payload)}\n\n`;
 };
 
+export type EventStream = {
+  send: (event: string, data: unknown) => void;
+  close: () => void;
+  readonly open: boolean;
+};
+
+// Opens a named-event SSE response. Used by the Ask endpoint, which sends
+// `message` / `token` / `citations` / `done` / `error` frames rather than the
+// single anonymous frame the ingestion progress stream uses.
+//
+// Writes are dropped once the socket is gone, so a client that navigates away
+// mid-answer cannot crash the generation that is still finishing server-side.
+export const openEventStream = (res: Response): EventStream => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // Tells nginx not to buffer the response — without it tokens arrive in one
+    // burst at the end, which defeats streaming entirely.
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders();
+
+  return {
+    send: (event, data) => {
+      if (res.writableEnded || res.destroyed) {
+        return;
+      }
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
+    close: () => {
+      if (!res.writableEnded) {
+        res.end();
+      }
+    },
+    get open() {
+      return !res.writableEnded && !res.destroyed;
+    }
+  };
+};
+
 // Called by the ingestion worker to broadcast a state transition.
 export const publishStatus = async (
   sourceId: string,
@@ -115,4 +156,4 @@ export const streamAllStatus = async (
   });
 };
 
-export default { publishStatus, streamAllStatus };
+export default { publishStatus, streamAllStatus, openEventStream };

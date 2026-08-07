@@ -32,6 +32,11 @@ export const openApiDocument = {
       name: 'Notes',
       description:
         'Private notes inside a research space. Notes are working material, not evidence sources: their content is never used as AI chat retrieval context unless explicitly converted into a source.'
+    },
+    {
+      name: 'Ask',
+      description:
+        "Grounded question answering over a space's indexed evidence. Answers are generated only from retrieved passages of sources in `ready` state, every claim carries a citation that resolves back to the exact passage, and an answer can be saved to Notes with its citations attached."
     }
   ],
   paths: {
@@ -588,6 +593,8 @@ export const openApiDocument = {
       get: {
         tags: ['Sources'],
         summary: 'Get a single source',
+        description:
+          'Returns the source with its extracted content and, unlike the list endpoint, its indexed `passages` — the reader needs them to resolve a citation deep link (`#evidence-passage-{id}`) to the exact cited text.',
         operationId: 'getSource',
         security: [
           {
@@ -1007,6 +1014,301 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/spaces/{spaceId}/ask': {
+      post: {
+        tags: ['Ask'],
+        summary: 'Ask a question and stream a grounded answer',
+        description:
+          'Answers a question from the evidence indexed in the space, streaming the reply as **Server-Sent Events** (`Content-Type: text/event-stream`).\n\nRetrieval is hybrid — vector similarity fused with Postgres full-text ranking — and only searches sources in `ready` state. The model is instructed to use nothing but the retrieved passages and to cite each claim as `[n]`; markers it invents are stripped and the survivors are renumbered, so `[n]` in `content` always indexes `citations[n-1]`.\n\nFrames, in order:\n- `message` — `{ conversationId, messageId }`, sent once generation starts. Pass `conversationId` back on the next request to continue the thread.\n- `token` — `{ text }`, one per model delta.\n- `citations` — `{ citations }`, the resolved evidence.\n- `done` — the canonical `{ messageId, content, citations, limitation, stopped }`. `content` is the post-processed answer and replaces whatever the `token` frames accumulated.\n- `error` — `{ message, code }` when generation fails after the stream opened.\n\nAborting the request (the Stop control) cancels generation, persists the partial answer, and marks it `stopped: true`. Preconditions are checked before the stream opens, so a rejected request is an ordinary JSON error response.',
+        operationId: 'askQuestion',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/AskRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Server-Sent Event stream of the answer',
+            content: {
+              'text/event-stream': {
+                schema: {
+                  type: 'string',
+                  example:
+                    'event: message\ndata: {"conversationId":"…","messageId":"…"}\n\nevent: token\ndata: {"text":"Fragmented client records "}\n\nevent: citations\ndata: {"citations":[…]}\n\nevent: done\ndata: {"messageId":"…","content":"…","citations":[…],"limitation":null,"stopped":false}\n\n'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error, or the space has no sources in `ready` state (code: NO_EVIDENCE)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space (code: SPACE_NOT_FOUND), source (code: SOURCE_NOT_FOUND) or conversation (code: CONVERSATION_NOT_FOUND) not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '409': {
+            description:
+              'The requested source is still being processed (code: SOURCE_NOT_READY)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}/ask/suggestions': {
+      get: {
+        tags: ['Ask'],
+        summary: 'Starter questions for the Ask empty state',
+        description:
+          "Returns three suggested questions. Scoping to a single `ready` source drafts them from that document's own text (cached per source revision); every other case — whole space, a source still processing, or a model failure — returns the generic defaults with `isDynamic: false`.",
+        operationId: 'getAskSuggestions',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            name: 'scope',
+            in: 'query',
+            required: false,
+            description: 'Defaults to `space`.',
+            schema: {
+              type: 'string',
+              enum: ['space', 'source'],
+              default: 'space'
+            }
+          },
+          {
+            name: 'sourceId',
+            in: 'query',
+            required: false,
+            description: 'Required when `scope=source`.',
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Suggested questions',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/AskSuggestionsSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            $ref: '#/components/responses/SpaceNotFound'
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}/conversations/{conversationId}': {
+      get: {
+        tags: ['Ask'],
+        summary: 'Read a conversation',
+        description:
+          'Returns a conversation with its full message history, including citations, limitations, feedback ratings and whether each answer has been saved as a note.',
+        operationId: 'getConversation',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          },
+          {
+            $ref: '#/components/parameters/ConversationIdPath'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Conversation found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ConversationSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description:
+              'Space (code: SPACE_NOT_FOUND) or conversation (code: CONVERSATION_NOT_FOUND) not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/spaces/{spaceId}/conversations/{conversationId}/messages/{messageId}/feedback':
+      {
+        post: {
+          tags: ['Ask'],
+          summary: 'Rate an answer',
+          description:
+            'Records whether an answer was useful. Re-rating the same answer overwrites the previous rating.',
+          operationId: 'recordAnswerFeedback',
+          security: [
+            {
+              bearerAuth: []
+            }
+          ],
+          parameters: [
+            {
+              $ref: '#/components/parameters/SpaceIdPath'
+            },
+            {
+              $ref: '#/components/parameters/ConversationIdPath'
+            },
+            {
+              name: 'messageId',
+              in: 'path',
+              required: true,
+              description: 'Assistant message ID',
+              schema: {
+                type: 'string',
+                format: 'uuid'
+              }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['rating'],
+                  properties: {
+                    rating: {
+                      type: 'string',
+                      enum: ['useful', 'not_useful']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'Feedback recorded',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['status', 'data'],
+                    properties: {
+                      status: {
+                        type: 'string',
+                        enum: ['success']
+                      },
+                      data: {
+                        type: 'object',
+                        required: ['messageId', 'feedback'],
+                        properties: {
+                          messageId: {
+                            type: 'string',
+                            format: 'uuid'
+                          },
+                          feedback: {
+                            type: 'string',
+                            enum: ['useful', 'not_useful']
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '401': {
+              $ref: '#/components/responses/Unauthorized'
+            },
+            '404': {
+              description:
+                'Space (code: SPACE_NOT_FOUND), conversation (code: CONVERSATION_NOT_FOUND) or message (code: MESSAGE_NOT_FOUND) not found',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/ErrorResponse'
+                  }
+                }
+              }
+            },
+            '500': {
+              $ref: '#/components/responses/InternalError'
+            }
+          }
+        }
+      },
     '/api/v1/users/{id}': {
       get: {
         tags: ['Users'],
@@ -1066,6 +1368,16 @@ export const openApiDocument = {
         in: 'path',
         required: true,
         description: 'Research space ID',
+        schema: {
+          type: 'string',
+          format: 'uuid'
+        }
+      },
+      ConversationIdPath: {
+        name: 'conversationId',
+        in: 'path',
+        required: true,
+        description: 'Conversation ID',
         schema: {
           type: 'string',
           format: 'uuid'
@@ -1514,6 +1826,251 @@ export const openApiDocument = {
               'Rich-text content (HTML). Sanitized on save; its plain-text projection must be 1-20,000 characters and the raw HTML must not exceed 200,000 characters.',
             example:
               '<p>Scaling laws hold across <strong>three</strong> orders of magnitude.</p>'
+          },
+          origin: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['conversationId', 'messageId'],
+            description:
+              'Set when saving a chat answer. The note is stored with `originType: SavedAssistantAnswer` and inherits the citations recorded for that answer, which are read server-side rather than taken from the request. An answer can only be saved once (code: MESSAGE_ALREADY_SAVED).',
+            properties: {
+              conversationId: {
+                type: 'string',
+                format: 'uuid'
+              },
+              messageId: {
+                type: 'string',
+                format: 'uuid'
+              }
+            }
+          }
+        }
+      },
+      AskRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['question'],
+        properties: {
+          question: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 1000,
+            example: 'What problems appear most often?'
+          },
+          scope: {
+            type: 'string',
+            enum: ['space', 'source'],
+            default: 'space',
+            description:
+              '`space` searches every `ready` source; `source` pins the answer to one document.'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'Required when `scope=source`, rejected otherwise.'
+          },
+          conversationId: {
+            type: 'string',
+            format: 'uuid',
+            description:
+              'Continues an existing thread. Omit to start a new conversation.'
+          }
+        }
+      },
+      AnswerCitation: {
+        type: 'object',
+        required: ['id', 'sourceId', 'sourceTitle', 'passageId', 'snippet'],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid',
+            description:
+              'Citation record. Saving the answer as a note links this row.'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceTitle: {
+            type: 'string',
+            example: 'Onboarding Benchmark Report'
+          },
+          sourceType: {
+            type: 'string',
+            enum: ['File', 'Web', 'Manual']
+          },
+          sourceAuthor: {
+            type: 'string',
+            nullable: true
+          },
+          passageId: {
+            type: 'string',
+            format: 'uuid',
+            description:
+              'Indexed passage the claim came from. The reader deep-links to it as `#evidence-passage-{passageId}`.'
+          },
+          snippet: {
+            type: 'string',
+            description: 'The cited passage text, verbatim.'
+          },
+          locationLabel: {
+            type: 'string',
+            nullable: true,
+            description:
+              'Human-readable position, derived from the page markers the extractor left in the text or the passage heading path.',
+            example: 'Page 14'
+          },
+          pageReference: {
+            type: 'string',
+            nullable: true,
+            example: '14'
+          },
+          sectionReference: {
+            type: 'string',
+            nullable: true,
+            example: 'Methods › Sampling'
+          }
+        }
+      },
+      ConversationMessage: {
+        type: 'object',
+        required: ['id', 'role', 'content', 'createdAt'],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid'
+          },
+          role: {
+            type: 'string',
+            enum: ['user', 'assistant']
+          },
+          content: {
+            type: 'string'
+          },
+          citations: {
+            type: 'array',
+            items: {
+              $ref: '#/components/schemas/AnswerCitation'
+            }
+          },
+          limitation: {
+            type: 'string',
+            nullable: true,
+            description:
+              'Caveat shown above the answer when the evidence is thin or one-sided.',
+            example: 'Only one source contains a primary provider interview.'
+          },
+          feedback: {
+            type: 'string',
+            nullable: true,
+            enum: ['useful', 'not_useful']
+          },
+          savedNoteId: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description: 'Set once the answer has been saved to Notes.'
+          },
+          stopped: {
+            type: 'boolean',
+            description: 'True when the user stopped generation part-way.'
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      ConversationSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['conversation'],
+            properties: {
+              conversation: {
+                type: 'object',
+                required: ['id', 'title', 'messages'],
+                properties: {
+                  id: {
+                    type: 'string',
+                    format: 'uuid'
+                  },
+                  researchSpaceId: {
+                    type: 'string',
+                    format: 'uuid'
+                  },
+                  title: {
+                    type: 'string'
+                  },
+                  scope: {
+                    type: 'object',
+                    nullable: true,
+                    properties: {
+                      type: {
+                        type: 'string',
+                        enum: ['space', 'source']
+                      },
+                      sourceId: {
+                        type: 'string',
+                        format: 'uuid'
+                      }
+                    }
+                  },
+                  messages: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/components/schemas/ConversationMessage'
+                    }
+                  },
+                  createdAt: {
+                    type: 'string',
+                    format: 'date-time'
+                  },
+                  updatedAt: {
+                    type: 'string',
+                    format: 'date-time'
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      AskSuggestionsSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['suggestions', 'isDynamic'],
+            properties: {
+              suggestions: {
+                type: 'array',
+                items: {
+                  type: 'string'
+                },
+                example: [
+                  'Summarize all the evidence.',
+                  'What problems appear most often?',
+                  'Where do the sources disagree?'
+                ]
+              },
+              isDynamic: {
+                type: 'boolean',
+                description:
+                  'True when the questions were drafted from the selected document rather than the static defaults.'
+              }
+            }
           }
         }
       },
@@ -1695,6 +2252,54 @@ export const openApiDocument = {
           updatedAt: {
             type: 'string',
             format: 'date-time'
+          },
+          passages: {
+            type: 'array',
+            description:
+              'Indexed evidence passages in reading order. Returned by the detail endpoint only — a citation deep-links into the reader as `#evidence-passage-{id}`, resolved against this list. Empty until ingestion reaches `ready`.',
+            items: {
+              type: 'object',
+              required: ['id', 'content'],
+              properties: {
+                id: {
+                  type: 'string',
+                  format: 'uuid'
+                },
+                content: {
+                  type: 'string'
+                },
+                tokenCount: {
+                  type: 'integer'
+                },
+                locator: {
+                  type: 'object',
+                  description:
+                    'Where the passage sits in the normalized document.',
+                  properties: {
+                    blockRange: {
+                      type: 'array',
+                      items: {
+                        type: 'integer'
+                      },
+                      minItems: 2,
+                      maxItems: 2
+                    },
+                    headingPath: {
+                      type: 'array',
+                      items: {
+                        type: 'string'
+                      }
+                    },
+                    firstOrder: {
+                      type: 'integer'
+                    },
+                    lastOrder: {
+                      type: 'integer'
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },

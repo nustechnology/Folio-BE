@@ -27,6 +27,27 @@ export const NOTE = {
   PREVIEW_MAX_LENGTH: 280
 } as const;
 
+export const ASK = {
+  QUESTION_MIN_LENGTH: 1,
+  QUESTION_MAX_LENGTH: 1_000,
+  /** Conversation titles are the opening question, trimmed to fit a sidebar. */
+  TITLE_MAX_LENGTH: 60,
+  /** Prior turns replayed for follow-up questions (user + assistant). */
+  HISTORY_MESSAGE_LIMIT: 12,
+  /** Marker the model ends on when it wants to caveat its own answer. */
+  LIMITATION_PREFIX: 'LIMITATION:',
+  SUGGESTION_COUNT: 3,
+  /** Characters of a document handed to the model when drafting suggestions. */
+  SUGGESTION_CONTEXT_CHARS: 4_000,
+  NO_EVIDENCE_ANSWER:
+    'No indexed evidence in the selected scope bears on that question. Try rephrasing it, widening the scope to the entire space, or adding a source that covers the topic.',
+  DEFAULT_SUGGESTIONS: [
+    'Summarize all the evidence.',
+    'What problems appear most often?',
+    'Where do the sources disagree?'
+  ]
+} as const;
+
 export const PAGINATION = {
   DEFAULT_PAGE: 1,
   DEFAULT_LIMIT: 10,

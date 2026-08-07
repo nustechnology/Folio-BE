@@ -1,6 +1,7 @@
 import Joi from 'joi';
 
 import {
+  PAGINATION,
   SOURCE_AUTHOR_MAX_LENGTH,
   SOURCE_CONTENT_MAX_LENGTH,
   SOURCE_CONTENT_MIN_LENGTH,
@@ -91,5 +92,11 @@ export const listSourcesQuerySchema = Joi.object({
   search: Joi.string().trim().max(255).allow('').optional(),
   sort: Joi.string()
     .valid('recently-added', 'alphabetical-az', 'alphabetical-za')
-    .default('recently-added')
+    .default('recently-added'),
+  page: Joi.number().integer().min(1).default(PAGINATION.DEFAULT_PAGE),
+  limit: Joi.number()
+    .integer()
+    .min(1)
+    .max(PAGINATION.MAX_LIMIT)
+    .default(PAGINATION.DEFAULT_LIMIT)
 });

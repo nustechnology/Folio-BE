@@ -20,6 +20,10 @@ export const listSpacesQuerySchema = Joi.object({
     .default(PAGINATION.DEFAULT_LIMIT)
 });
 
+export const spaceIdParamSchema = Joi.object({
+  spaceId: Joi.string().uuid().required()
+});
+
 export const createSpaceSchema = Joi.object({
   name: Joi.string()
     .trim()

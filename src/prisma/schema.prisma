@@ -160,6 +160,10 @@ model Citation {
   paragraphReference  String?
   sectionReference    String?
   passageLocator      String?
+  /// Passage the citation was drawn from. Deliberately not a foreign key:
+  /// re-ingesting a source replaces its passages, and a saved note must keep
+  /// its evidence even when the id it points at no longer resolves.
+  passageId           String?
   createdAt           DateTime @default(now())
 
   noteReferences NoteCitation[]

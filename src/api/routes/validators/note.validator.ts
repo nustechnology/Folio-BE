@@ -51,5 +51,10 @@ export const createNoteSchema = Joi.object({
       'string.min': 'Content cannot be empty',
       'any.required': 'Content cannot be empty',
       'string.max': 'Content exceeds the maximum allowed size'
-    })
+    }),
+  /** Set when saving a chat answer; both ids are needed to resolve it. */
+  origin: Joi.object({
+    conversationId: Joi.string().uuid().required(),
+    messageId: Joi.string().uuid().required()
+  }).optional()
 });
