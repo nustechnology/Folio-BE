@@ -196,6 +196,62 @@ const createManual = async (
   return source;
 };
 
+/**
+ * A note promoted to evidence (notes REQ-022). The snapshot is a `Manual`
+ * source: the note's plain text is copied into `content` and never read back
+ * from the note again, so later note edits — or the note's deletion — cannot
+ * change what was indexed.
+ *
+ * The `SOURCE_CONTENT_MIN_LENGTH` floor that guards pasted text is deliberately
+ * not applied here: the note already passed the notes capability's own content
+ * rules, and refusing to convert a valid one-line note would be a rule invented
+ * by the source form rather than by the note.
+ */
+const createFromNote = async (
+  spaceId: string,
+  userId: string,
+  note: {
+    id: string;
+    title: string;
+    /** Plain-text projection of the note's markup, produced by the caller. */
+    content: string;
+    /** A saved AI answer, as opposed to something the user typed themselves. */
+    isAssistantAuthored: boolean;
+  },
+  data: { title?: string }
+) => {
+  await verifySpaceOwnership(spaceId, userId);
+
+  const existing = await SourceRepository.findByOriginalNoteId(note.id);
+  if (existing) {
+    throw new AppError(
+      'Source snapshot already exists',
+      StatusCodes.CONFLICT,
+      ErrorCode.NOTE_ALREADY_CONVERTED
+    );
+  }
+
+  const user = await UserRepository.findById(userId);
+  const authorName = user?.name || 'Unknown Author';
+
+  const source = await SourceRepository.create({
+    researchSpace: { connect: { id: spaceId } },
+    originalNote: { connect: { id: note.id } },
+    sourceType: 'Manual',
+    title: data.title?.trim() || note.title,
+    // Attribution follows the reference: a saved answer is the user's material,
+    // but it was not written by them unaided.
+    author: note.isAssistantAuthored
+      ? `AI-assisted note by ${authorName}`
+      : authorName,
+    content: note.content,
+    processingState: 'added'
+  });
+
+  await enqueueIngestion(source.id);
+  return source;
+};
+
 const list = async (
   spaceId: string,
   userId: string,
@@ -248,6 +304,7 @@ export default {
   createFile,
   createWeb,
   createManual,
+  createFromNote,
   list,
   getById,
   remove,

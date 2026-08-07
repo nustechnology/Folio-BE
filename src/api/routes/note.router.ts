@@ -9,10 +9,12 @@ import {
   validateQuery
 } from '~/api/middlewares/validation.middleware';
 import {
+  convertNoteSchema,
   createNoteSchema,
   listNotesQuerySchema,
   noteParamsSchema,
-  spaceIdParamSchema
+  spaceIdParamSchema,
+  updateNoteSchema
 } from '~/api/routes/validators/note.validator';
 
 /** Mounted under `/spaces/:spaceId/notes`, so `spaceId` comes from the parent. */
@@ -39,6 +41,29 @@ router.get(
   auth,
   validateParams(noteParamsSchema),
   asyncHandler(NoteController.get)
+);
+
+router.patch(
+  '/:noteId',
+  auth,
+  validateParams(noteParamsSchema),
+  validateBody(updateNoteSchema),
+  asyncHandler(NoteController.update)
+);
+
+router.post(
+  '/:noteId/convert-to-source',
+  auth,
+  validateParams(noteParamsSchema),
+  validateBody(convertNoteSchema),
+  asyncHandler(NoteController.convertToSource)
+);
+
+router.delete(
+  '/:noteId',
+  auth,
+  validateParams(noteParamsSchema),
+  asyncHandler(NoteController.remove)
 );
 
 export default router;
