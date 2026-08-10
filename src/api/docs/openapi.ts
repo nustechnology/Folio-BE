@@ -843,6 +843,17 @@ export const openApiDocument = {
           '404': {
             $ref: '#/components/responses/SpaceNotFound'
           },
+          '409': {
+            description:
+              'The answer named by `origin` has already been saved to a note (code: MESSAGE_ALREADY_SAVED)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -1019,7 +1030,7 @@ export const openApiDocument = {
         tags: ['Ask'],
         summary: 'Ask a question and stream a grounded answer',
         description:
-          'Answers a question from the evidence indexed in the space, streaming the reply as **Server-Sent Events** (`Content-Type: text/event-stream`).\n\nRetrieval is hybrid — vector similarity fused with Postgres full-text ranking — and only searches sources in `ready` state. The model is instructed to use nothing but the retrieved passages and to cite each claim as `[n]`; markers it invents are stripped and the survivors are renumbered, so `[n]` in `content` always indexes `citations[n-1]`.\n\nFrames, in order:\n- `message` — `{ conversationId, messageId }`, sent once generation starts. Pass `conversationId` back on the next request to continue the thread.\n- `token` — `{ text }`, one per model delta.\n- `citations` — `{ citations }`, the resolved evidence.\n- `done` — the canonical `{ messageId, content, citations, limitation, stopped }`. `content` is the post-processed answer and replaces whatever the `token` frames accumulated.\n- `error` — `{ message, code }` when generation fails after the stream opened.\n\nAborting the request (the Stop control) cancels generation, persists the partial answer, and marks it `stopped: true`. Preconditions are checked before the stream opens, so a rejected request is an ordinary JSON error response.',
+          'Answers a question from the evidence indexed in the space, streaming the reply as **Server-Sent Events** (`Content-Type: text/event-stream`).\n\nRetrieval is hybrid — vector similarity fused with Postgres full-text ranking — and only searches sources in `ready` state. The model is instructed to use nothing but the retrieved passages and to cite each claim as `[n]`; markers it invents are stripped and the survivors are renumbered, so `[n]` in `content` always indexes `citations[n-1]`.\n\nFrames, in order:\n- `start` — `{ conversationId, messageId }`, sent once generation starts. Pass `conversationId` back on the next request to continue the thread.\n- `token` — `{ text }`, one per model delta.\n- `citations` — `{ citations }`, the resolved evidence.\n- `done` — the canonical `{ messageId, content, citations, limitation, stopped }`. `content` is the post-processed answer and replaces whatever the `token` frames accumulated.\n- `error` — `{ message, code }` when generation fails after the stream opened.\n\nAborting the request (the Stop control) cancels generation, persists the partial answer, and marks it `stopped: true`. Preconditions are checked before the stream opens, so a rejected request is an ordinary JSON error response.',
         operationId: 'askQuestion',
         security: [
           {
@@ -1049,7 +1060,7 @@ export const openApiDocument = {
                 schema: {
                   type: 'string',
                   example:
-                    'event: message\ndata: {"conversationId":"…","messageId":"…"}\n\nevent: token\ndata: {"text":"Fragmented client records "}\n\nevent: citations\ndata: {"citations":[…]}\n\nevent: done\ndata: {"messageId":"…","content":"…","citations":[…],"limitation":null,"stopped":false}\n\n'
+                    'event: start\ndata: {"conversationId":"…","messageId":"…"}\n\nevent: token\ndata: {"text":"Fragmented client records "}\n\nevent: citations\ndata: {"citations":[…]}\n\nevent: done\ndata: {"messageId":"…","content":"…","citations":[…],"limitation":null,"stopped":false}\n\n'
                 }
               }
             }
@@ -1879,7 +1890,18 @@ export const openApiDocument = {
       },
       AnswerCitation: {
         type: 'object',
-        required: ['id', 'sourceId', 'sourceTitle', 'passageId', 'snippet'],
+        required: [
+          'id',
+          'sourceId',
+          'sourceTitle',
+          'sourceType',
+          'sourceAuthor',
+          'passageId',
+          'snippet',
+          'locationLabel',
+          'pageReference',
+          'sectionReference'
+        ],
         properties: {
           id: {
             type: 'string',
@@ -2479,6 +2501,12 @@ export const openApiDocument = {
               'NOTE_NOT_FOUND',
               'NOTE_CONTENT_EMPTY',
               'NOTE_CONTENT_TOO_LONG',
+              'SOURCE_NOT_FOUND',
+              'CONVERSATION_NOT_FOUND',
+              'MESSAGE_NOT_FOUND',
+              'MESSAGE_ALREADY_SAVED',
+              'NO_EVIDENCE',
+              'SOURCE_NOT_READY',
               'INTERNAL_ERROR'
             ],
             nullable: true

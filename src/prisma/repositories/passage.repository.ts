@@ -87,6 +87,12 @@ const searchHybrid = async (
   const { researchSpaceId, sourceId, embedding, query, candidates, limit } =
     options;
 
+  // An empty embedding would build the literal `[]`, which Postgres rejects as a
+  // `vector` (it needs at least one dimension) and would fail the whole query.
+  if (embedding.length === 0) {
+    return [];
+  }
+
   const sourceFilter = sourceId
     ? Prisma.sql`AND p."sourceId" = ${sourceId}`
     : Prisma.empty;

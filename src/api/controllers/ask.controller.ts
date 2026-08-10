@@ -35,7 +35,7 @@ const ask = async (req: Request, res: Response) => {
       {
         onStart: (payload) => {
           stream = openEventStream(res);
-          stream.send('message', payload);
+          stream.send('start', payload);
         },
         onToken: (text) => stream?.send('token', { text }),
         onDone: (payload) => {

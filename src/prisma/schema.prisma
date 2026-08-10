@@ -154,7 +154,7 @@ model Notebook {
 model Citation {
   id                  String   @id @default(uuid())
   sourceId            String
-  source              Source   @relation(fields: [sourceId], references: [id])
+  source              Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   supportingPassage   String
   pageReference       String?
   paragraphReference  String?
@@ -175,7 +175,7 @@ model NoteCitation {
   noteId     String
   note       Note     @relation(fields: [noteId], references: [id])
   citationId String
-  citation   Citation @relation(fields: [citationId], references: [id])
+  citation   Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
 
   @@id([noteId, citationId])
   @@index([citationId])

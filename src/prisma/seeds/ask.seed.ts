@@ -27,6 +27,14 @@ import { enqueueIngestion } from '~/queues/ingestion.queue';
 const SPACE_NAME = 'Aged-Care Operations';
 
 /**
+ * Fixed id for the space this seed owns. The teardown below deletes sources,
+ * notes and conversations, so it must never match a space a person created: the
+ * name is user-editable and would collide, while this id can only exist because
+ * a previous run of this script wrote it.
+ */
+const SEED_SPACE_ID = '00000000-0000-4000-8000-00000000a5ed';
+
+/**
  * `[page N]` markers are what the PDF extractor leaves behind and what citation
  * page labels are derived from. Manual sources keep their text verbatim, so
  * including them here exercises that path without needing a real PDF.
@@ -107,24 +115,45 @@ async function main() {
 
   const email = process.env.SEED_USER_EMAIL || 'alice@example.com';
 
+  const password = await bcrypt.hash(env.SEED_USER_PASSWORD, 10);
+
   let user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     user = await prisma.user.create({
       data: {
         name: 'alice',
         email,
-        password: await bcrypt.hash(env.SEED_USER_PASSWORD, 10)
+        password
       }
     });
     console.log(`Created user ${email}`);
   } else {
+    // A rerun resets the password: otherwise the seed user keeps whatever it was
+    // first created with and SEED_USER_PASSWORD no longer logs in.
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { password }
+    });
     console.log(`Using existing user ${email}`);
+  }
+
+  // A space carrying the seed name but not the seed id was made by hand. Its
+  // notes and conversations are real work, so refuse rather than tear it down.
+  const impostor = await prisma.researchSpace.findFirst({
+    where: { ownerId: user.id, name: SPACE_NAME, id: { not: SEED_SPACE_ID } }
+  });
+  if (impostor) {
+    throw new Error(
+      `A space named "${SPACE_NAME}" (id ${impostor.id}) already exists for ` +
+        `${email} and was not created by this seed. Rename or delete it, or ` +
+        'set SEED_USER_EMAIL to a different account.'
+    );
   }
 
   // Re-running should give a clean space rather than four more copies of every
   // source, so an existing seeded space is torn down first.
-  const existing = await prisma.researchSpace.findFirst({
-    where: { ownerId: user.id, name: SPACE_NAME }
+  const existing = await prisma.researchSpace.findUnique({
+    where: { id: SEED_SPACE_ID }
   });
 
   if (existing) {
@@ -162,6 +191,7 @@ async function main() {
 
   const space = await prisma.researchSpace.create({
     data: {
+      id: SEED_SPACE_ID,
       ownerId: user.id,
       name: SPACE_NAME,
       researchObjective:

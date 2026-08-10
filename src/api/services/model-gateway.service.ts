@@ -54,8 +54,10 @@ const toModelError = (error: unknown, action: string): AppError => {
     model: env.MODEL_CHAT_MODEL,
     baseURL: env.MODEL_CHAT_BASE_URL
   });
+  // The provider detail goes to the log only — it can carry keys, hostnames, or
+  // prompt fragments, so the client gets a fixed message.
   return new AppError(
-    `${action} failed: ${detail}`,
+    `${action} failed. Please try again.`,
     StatusCodes.BAD_GATEWAY,
     ErrorCode.GENERATION_FAILED
   );

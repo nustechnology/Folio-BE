@@ -177,18 +177,20 @@ const streamAnswer = async (
     );
   }
 
+  // Retrieval runs while a failure is still an ordinary precondition error: it
+  // must not create a conversation or emit `onStart` before it succeeds.
+  const evidence = await RetrievalService.retrieveEvidence({
+    researchSpaceId: spaceId,
+    sourceId: scope.sourceId,
+    question: input.question
+  });
+
   const conversation = await getOrCreateConversation(spaceId, input, scope);
   const history = ConversationRepository.parseMessages(conversation.messages);
 
   const messageId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   callbacks.onStart({ conversationId: conversation.id, messageId });
-
-  const evidence = await RetrievalService.retrieveEvidence({
-    researchSpaceId: spaceId,
-    sourceId: scope.sourceId,
-    question: input.question
-  });
 
   const finish = async (raw: string, stopped: boolean) => {
     const processed = AskPrompt.processAnswer(raw, evidence);

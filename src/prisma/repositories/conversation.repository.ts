@@ -7,17 +7,24 @@ import prisma from '~/prisma/prisma.client';
  * into the shape the API works with. Anything malformed (hand-edited row, older
  * write) is dropped rather than surfaced as a broken turn.
  */
+const isStoredMessage = (value: Prisma.JsonValue): value is StoredMessage => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === 'string' &&
+    (candidate.role === 'user' || candidate.role === 'assistant') &&
+    typeof candidate.content === 'string' &&
+    typeof candidate.createdAt === 'string'
+  );
+};
+
 const parseMessages = (value: Prisma.JsonValue): StoredMessage[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.filter(
-    (message): message is StoredMessage =>
-      typeof message === 'object' &&
-      message !== null &&
-      !Array.isArray(message) &&
-      typeof (message as { id?: unknown }).id === 'string'
-  );
+  return value.filter(isStoredMessage);
 };
 
 const create = async (data: {
@@ -51,15 +58,38 @@ const getMessages = async (
 };
 
 /**
- * Appends turns to a conversation inside a transaction that re-reads the
- * column first: two answers streaming in the same conversation would otherwise
- * overwrite each other's messages on write-back.
+ * Both writers below replace the whole `messages` array, so re-reading inside a
+ * transaction is not enough on its own: under the default Read Committed
+ * isolation two concurrent transactions read the same array and the later commit
+ * silently drops the earlier one's turn. `SELECT ... FOR UPDATE` takes a row
+ * lock so the second transaction waits, then re-reads the committed array
+ * (Read Committed takes a fresh snapshot per statement) before writing.
+ *
+ * Returns false when the row does not exist.
+ */
+const lockConversation = async (
+  tx: Prisma.TransactionClient,
+  id: string
+): Promise<boolean> => {
+  const locked = await tx.$queryRaw<
+    { id: string }[]
+  >`SELECT "id" FROM "Conversation" WHERE "id" = ${id} FOR UPDATE`;
+  return locked.length > 0;
+};
+
+/**
+ * Appends turns to a conversation inside a transaction that locks and re-reads
+ * the column first: two answers streaming in the same conversation would
+ * otherwise overwrite each other's messages on write-back.
  */
 const appendMessages = async (
   id: string,
   messages: StoredMessage[]
 ): Promise<void> => {
   await prisma.$transaction(async (tx) => {
+    if (!(await lockConversation(tx, id))) {
+      return;
+    }
     const conversation = await tx.conversation.findUnique({ where: { id } });
     if (!conversation) {
       return;
@@ -83,6 +113,9 @@ const updateMessage = async (
   patch: Partial<StoredMessage>
 ): Promise<StoredMessage | null> => {
   return prisma.$transaction(async (tx) => {
+    if (!(await lockConversation(tx, id))) {
+      return null;
+    }
     const conversation = await tx.conversation.findUnique({ where: { id } });
     if (!conversation) {
       return null;

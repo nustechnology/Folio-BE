@@ -47,7 +47,7 @@ export type EventStream = {
 };
 
 // Opens a named-event SSE response. Used by the Ask endpoint, which sends
-// `message` / `token` / `citations` / `done` / `error` frames rather than the
+// `start` / `token` / `citations` / `done` / `error` frames rather than the
 // single anonymous frame the ingestion progress stream uses.
 //
 // Writes are dropped once the socket is gone, so a client that navigates away
