@@ -1,6 +1,13 @@
 import { RetrievalScope, StoredMessage } from '~/api/types/ask';
 import { Prisma } from '~/generated/prisma/client';
 import prisma from '~/prisma/prisma.client';
+import { escapeLikePattern } from '~/prisma/repositories/search.util';
+
+export type ListConversationsOptions = {
+  search?: string;
+  page: number;
+  limit: number;
+};
 
 /**
  * `Conversation.messages` is a JSON column, so every read has to widen it back
@@ -44,6 +51,70 @@ const create = async (data: {
 
 const findByIdInSpace = async (id: string, researchSpaceId: string) => {
   return prisma.conversation.findFirst({ where: { id, researchSpaceId } });
+};
+
+/**
+ * History rows for one space, most recently answered first.
+ *
+ * The `select` deliberately omits `messages`. That column holds the entire
+ * thread — every answer's full text plus its citation snippets — so a page of
+ * long conversations is megabytes of JSON parsed out of Postgres and discarded
+ * to render a title and a timestamp. It is also why a row carries no message
+ * count or answer preview: both would need the blob back. A count belongs in a
+ * denormalised column maintained by `appendMessages`, not in a wider select.
+ */
+const findManyBySpace = async (
+  researchSpaceId: string,
+  options: ListConversationsOptions
+) => {
+  const where: Prisma.ConversationWhereInput = { researchSpaceId };
+
+  if (options.search) {
+    where.title = {
+      contains: escapeLikePattern(options.search),
+      mode: 'insensitive'
+    };
+  }
+
+  const [conversations, totalCount] = await Promise.all([
+    prisma.conversation.findMany({
+      where,
+      select: { id: true, title: true, createdAt: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+      skip: (options.page - 1) * options.limit,
+      take: options.limit
+    }),
+    prisma.conversation.count({ where })
+  ]);
+
+  return { conversations, totalCount };
+};
+
+const updateTitle = async (id: string, title: string) => {
+  return prisma.conversation.update({ where: { id }, data: { title } });
+};
+
+/**
+ * Deletes a conversation without taking the notes saved from it.
+ *
+ * `Note.originConversationId` is an optional relation, so Prisma's implicit
+ * `SetNull` would keep the delete from failing on the foreign key. But
+ * `originMessageId` is a bare `String?` with no FK — nothing nulls it — and a
+ * note left carrying a message id that resolves to nothing is worse than one
+ * that plainly has no origin. Both are cleared explicitly, in the same
+ * transaction as the delete.
+ *
+ * `originType` is left as `SavedAssistantAnswer`: the note is still a saved
+ * answer, it just no longer has a thread to point at.
+ */
+const deleteWithNoteDetach = async (id: string) => {
+  await prisma.$transaction([
+    prisma.note.updateMany({
+      where: { originConversationId: id },
+      data: { originConversationId: null, originMessageId: null }
+    }),
+    prisma.conversation.delete({ where: { id } })
+  ]);
 };
 
 const getMessages = async (
@@ -142,6 +213,9 @@ const updateMessage = async (
 export default {
   create,
   findByIdInSpace,
+  findManyBySpace,
+  updateTitle,
+  deleteWithNoteDetach,
   getMessages,
   appendMessages,
   updateMessage,

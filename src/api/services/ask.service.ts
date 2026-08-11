@@ -21,7 +21,9 @@ import logger from '~/config/logger';
 import CitationRepository, {
   NewCitation
 } from '~/prisma/repositories/citation.repository';
-import ConversationRepository from '~/prisma/repositories/conversation.repository';
+import ConversationRepository, {
+  ListConversationsOptions
+} from '~/prisma/repositories/conversation.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 
@@ -297,13 +299,14 @@ const streamAnswer = async (
   await finish(raw, signal.aborted);
 };
 
-const getConversation = async (
-  ownerId: string,
-  spaceId: string,
-  conversationId: string
+/**
+ * `findByIdInSpace` filters by space, which is not the same as an ownership
+ * check — every caller has to clear `assertSpaceAccess` first.
+ */
+const requireConversationInSpace = async (
+  conversationId: string,
+  spaceId: string
 ) => {
-  await assertSpaceAccess(spaceId, ownerId);
-
   const conversation = await ConversationRepository.findByIdInSpace(
     conversationId,
     spaceId
@@ -315,6 +318,85 @@ const getConversation = async (
       ErrorCode.CONVERSATION_NOT_FOUND
     );
   }
+  return conversation;
+};
+
+/**
+ * History list. Rows carry no message count or preview on purpose — see
+ * `ConversationRepository.findManyBySpace`.
+ */
+const listConversations = async (
+  ownerId: string,
+  spaceId: string,
+  options: ListConversationsOptions
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const { conversations, totalCount } =
+    await ConversationRepository.findManyBySpace(spaceId, options);
+
+  return {
+    conversations,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      totalCount,
+      totalPages: Math.ceil(totalCount / options.limit)
+    }
+  };
+};
+
+const renameConversation = async (
+  ownerId: string,
+  spaceId: string,
+  conversationId: string,
+  title: string
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+  await requireConversationInSpace(conversationId, spaceId);
+
+  const conversation = await ConversationRepository.updateTitle(
+    conversationId,
+    title
+  );
+
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt
+  };
+};
+
+/**
+ * Notes saved from this conversation survive it — the user kept them
+ * deliberately — with both origin columns cleared. See
+ * `ConversationRepository.deleteWithNoteDetach`.
+ */
+const deleteConversation = async (
+  ownerId: string,
+  spaceId: string,
+  conversationId: string
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+  await requireConversationInSpace(conversationId, spaceId);
+
+  await ConversationRepository.deleteWithNoteDetach(conversationId);
+
+  return { id: conversationId };
+};
+
+const getConversation = async (
+  ownerId: string,
+  spaceId: string,
+  conversationId: string
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const conversation = await requireConversationInSpace(
+    conversationId,
+    spaceId
+  );
 
   return {
     id: conversation.id,
@@ -336,18 +418,7 @@ const recordFeedback = async (
   rating: MessageFeedback
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
-
-  const conversation = await ConversationRepository.findByIdInSpace(
-    conversationId,
-    spaceId
-  );
-  if (!conversation) {
-    throw new AppError(
-      'Conversation not found.',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.CONVERSATION_NOT_FOUND
-    );
-  }
+  await requireConversationInSpace(conversationId, spaceId);
 
   const message = await ConversationRepository.updateMessage(
     conversationId,
@@ -368,6 +439,9 @@ const recordFeedback = async (
 export default {
   assertSpaceAccess,
   streamAnswer,
+  listConversations,
   getConversation,
+  renameConversation,
+  deleteConversation,
   recordFeedback
 };
