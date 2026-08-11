@@ -5,7 +5,7 @@ import Joi from 'joi';
 import { AppError } from '~/api/errors/app.error';
 import SourceService from '~/api/services/source.service';
 import SseService from '~/api/services/sse.service';
-import { successResponse } from '~/api/routes/response';
+import { paginatedResponse, successResponse } from '~/api/routes/response';
 import {
   createFileSourceSchema,
   createManualSourceSchema,
@@ -61,18 +61,24 @@ const create = async (req: Request, res: Response) => {
 };
 
 const list = async (req: Request, res: Response) => {
-  const { spaceId, sourceType, processingState, search, sort } =
-    req.query as Partial<ListSourceOptions> & {
+  const { spaceId, sourceType, processingState, search, sort, page, limit } =
+    req.query as unknown as Partial<ListSourceOptions> & {
       spaceId: string;
       sort?: string;
     };
-  const sources = await SourceService.list(spaceId, req.userId!, {
-    sourceType,
-    processingState,
-    search,
-    sort: (sort ?? 'recently-added') as ListSourceOptions['sort']
-  });
-  return successResponse(res, { sources });
+  const { sources, pagination } = await SourceService.list(
+    spaceId,
+    req.userId!,
+    {
+      sourceType,
+      processingState,
+      search,
+      sort: (sort ?? 'recently-added') as ListSourceOptions['sort'],
+      page: page ?? 1,
+      limit: limit ?? 10
+    }
+  );
+  return paginatedResponse(res, 'sources', sources, pagination);
 };
 
 const getById = async (req: Request, res: Response) => {

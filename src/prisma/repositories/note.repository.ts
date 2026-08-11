@@ -71,8 +71,22 @@ const create = async (data: {
   content: string;
   contentText: string;
   originType: OriginType;
+  originConversationId?: string;
+  originMessageId?: string;
+  /** Citation rows written when the answer was generated. */
+  citationIds?: string[];
 }) => {
-  return prisma.note.create({ data, include: citationCountInclude });
+  const { citationIds = [], ...note } = data;
+
+  return prisma.note.create({
+    data: {
+      ...note,
+      citationReferences: {
+        create: citationIds.map((citationId) => ({ citationId }))
+      }
+    },
+    include: citationCountInclude
+  });
 };
 
 /**

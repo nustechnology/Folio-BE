@@ -26,8 +26,17 @@ interface EnvInterface {
   MODEL_EMBEDDING_API_KEY: string;
   MODEL_EMBEDDING_MODEL: string;
   MODEL_EMBEDDING_DIMENSIONS: string;
+  MODEL_CHAT_BASE_URL: string;
+  MODEL_CHAT_API_KEY: string;
+  MODEL_CHAT_MODEL: string;
+  MODEL_CHAT_TEMPERATURE: string;
+  MODEL_CHAT_MAX_TOKENS: string;
   MODEL_REQUEST_TIMEOUT_MS: string;
   MODEL_MAX_RETRIES: string;
+  ASK_RETRIEVAL_CANDIDATES: string;
+  ASK_RETRIEVAL_TOP_K: string;
+  ASK_HISTORY_TURNS: string;
+  ASK_SUGGESTION_CACHE_TTL_S: string;
   CHUNK_PRE_SPLIT_TOKENS: string;
   CHUNK_TARGET_TOKENS: string;
   CHUNK_MAX_TOKENS: string;
@@ -68,8 +77,26 @@ export const env: EnvInterface = {
   MODEL_EMBEDDING_MODEL:
     process.env.MODEL_EMBEDDING_MODEL || 'text-embedding-3-small',
   MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1536',
+  // Generation runs through the same OpenAI-compatible surface as embeddings
+  // and defaults to the embedding endpoint's host, so a single local Ollama (or
+  // a single cloud key) serves both without extra configuration.
+  MODEL_CHAT_BASE_URL:
+    process.env.MODEL_CHAT_BASE_URL ||
+    process.env.MODEL_EMBEDDING_BASE_URL ||
+    'https://api.openai.com/v1',
+  MODEL_CHAT_API_KEY:
+    process.env.MODEL_CHAT_API_KEY || process.env.MODEL_EMBEDDING_API_KEY || '',
+  MODEL_CHAT_MODEL: process.env.MODEL_CHAT_MODEL || 'gpt-4o-mini',
+  MODEL_CHAT_TEMPERATURE: process.env.MODEL_CHAT_TEMPERATURE || '0.1',
+  MODEL_CHAT_MAX_TOKENS: process.env.MODEL_CHAT_MAX_TOKENS || '900',
   MODEL_REQUEST_TIMEOUT_MS: process.env.MODEL_REQUEST_TIMEOUT_MS || '60000',
   MODEL_MAX_RETRIES: process.env.MODEL_MAX_RETRIES || '1',
+  // Retrieval: `CANDIDATES` per branch of the hybrid search, `TOP_K` passages
+  // survive fusion and become the evidence the answer may cite.
+  ASK_RETRIEVAL_CANDIDATES: process.env.ASK_RETRIEVAL_CANDIDATES || '40',
+  ASK_RETRIEVAL_TOP_K: process.env.ASK_RETRIEVAL_TOP_K || '6',
+  ASK_HISTORY_TURNS: process.env.ASK_HISTORY_TURNS || '6',
+  ASK_SUGGESTION_CACHE_TTL_S: process.env.ASK_SUGGESTION_CACHE_TTL_S || '3600',
   CHUNK_PRE_SPLIT_TOKENS: process.env.CHUNK_PRE_SPLIT_TOKENS || '160',
   CHUNK_TARGET_TOKENS: process.env.CHUNK_TARGET_TOKENS || '500',
   CHUNK_MAX_TOKENS: process.env.CHUNK_MAX_TOKENS || '800',

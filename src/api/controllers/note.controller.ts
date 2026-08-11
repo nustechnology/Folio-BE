@@ -42,10 +42,11 @@ const get = async (req: Request, res: Response) => {
 
 const create = async (req: Request, res: Response) => {
   const { spaceId } = req.params as { spaceId: string };
-  const { title, content } = req.body;
+  const { title, content, origin } = req.body;
   const note = await NoteService.create(req.userId!, spaceId, {
     title,
-    content
+    content,
+    origin
   });
 
   return res

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 
 import SpaceController from '~/api/controllers/space.controller';
+import AskRouter from '~/api/routes/ask.router';
+import ConversationRouter from '~/api/routes/conversation.router';
 import NoteRouter from '~/api/routes/note.router';
 import NotebookRouter from '~/api/routes/notebook.router';
 import { auth } from '~/api/middlewares/auth.middleware';
@@ -41,5 +43,7 @@ router.get(
 
 router.use('/:spaceId/notes', NoteRouter);
 router.use('/:spaceId/notebook', NotebookRouter);
+router.use('/:spaceId/ask', AskRouter);
+router.use('/:spaceId/conversations', ConversationRouter);
 
 export default router;

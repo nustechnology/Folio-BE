@@ -2,11 +2,13 @@ import { StatusCodes } from 'http-status-codes';
 
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
+import { StoredMessage } from '~/api/types/ask';
 import SourceService from '~/api/services/source.service';
 import {
   ConvertNoteInput,
   CreateNoteInput,
   ListNotesOptions,
+  NoteOrigin,
   UpdateNoteInput
 } from '~/api/types/note';
 import { NOTE } from '~/api/utils/constants';
@@ -17,6 +19,7 @@ import {
 } from '~/api/utils/rich-text.util';
 import { assertSpaceAccess } from '~/api/services/space-access';
 import { OriginType, Prisma } from '~/generated/prisma/client';
+import ConversationRepository from '~/prisma/repositories/conversation.repository';
 import NoteRepository, {
   NoteRecord
 } from '~/prisma/repositories/note.repository';
@@ -115,12 +118,59 @@ const getById = async (ownerId: string, spaceId: string, noteId: string) => {
   return toDetail(await requireNoteInSpace(noteId, spaceId));
 };
 
+/**
+ * Resolves the answer a note is being saved from. The message is looked up
+ * server-side so its citations come from what was actually generated, and a
+ * message that has already been saved is rejected rather than duplicated.
+ */
+const resolveOrigin = async (
+  spaceId: string,
+  origin: NoteOrigin
+): Promise<StoredMessage> => {
+  const messages = await ConversationRepository.getMessages(
+    origin.conversationId,
+    spaceId
+  );
+  if (!messages) {
+    throw new AppError(
+      'Conversation not found.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.CONVERSATION_NOT_FOUND
+    );
+  }
+
+  const message = messages.find(
+    (item) => item.id === origin.messageId && item.role === 'assistant'
+  );
+  if (!message) {
+    throw new AppError(
+      'Answer not found in this conversation.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.MESSAGE_NOT_FOUND
+    );
+  }
+
+  if (message.savedNoteId) {
+    throw new AppError(
+      'This answer has already been saved as a note.',
+      StatusCodes.CONFLICT,
+      ErrorCode.MESSAGE_ALREADY_SAVED
+    );
+  }
+
+  return message;
+};
+
 const create = async (
   ownerId: string,
   spaceId: string,
   input: CreateNoteInput
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
+
+  const originMessage = input.origin
+    ? await resolveOrigin(spaceId, input.origin)
+    : null;
 
   const { content, contentText } = prepareContent(input.content);
 
@@ -129,8 +179,23 @@ const create = async (
     title: input.title?.trim() || NOTE.DEFAULT_TITLE,
     content,
     contentText,
-    originType: OriginType.UserCreated
+    originType: originMessage
+      ? OriginType.SavedAssistantAnswer
+      : OriginType.UserCreated,
+    originConversationId: input.origin?.conversationId,
+    originMessageId: input.origin?.messageId,
+    citationIds: originMessage?.citations?.map((citation) => citation.id)
   });
+
+  // Marks the answer as saved so the chat can disable its "Save as note"
+  // button — including after a reload, when client state is gone.
+  if (input.origin && originMessage) {
+    await ConversationRepository.updateMessage(
+      input.origin.conversationId,
+      input.origin.messageId,
+      { savedNoteId: note.id }
+    );
+  }
 
   return toDetail(note);
 };
