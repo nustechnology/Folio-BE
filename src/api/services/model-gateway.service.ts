@@ -63,6 +63,24 @@ const toModelError = (error: unknown, action: string): AppError => {
   );
 };
 
+// `Passage.embedding` is declared at a fixed width, so a model of another size
+// fails deep inside a raw INSERT with a Postgres type error that names neither
+// the model nor the setting behind it. `MODEL_EMBEDDING_DIMENSIONS` records the
+// width the schema was migrated to, which makes swapping the embedding model
+// without migrating an error that explains itself.
+const assertExpectedDimensions = (actual: number | undefined) => {
+  const expected = Number(env.MODEL_EMBEDDING_DIMENSIONS);
+  if (!actual || !expected || actual === expected) {
+    return;
+  }
+
+  throw new AppError(
+    `Embedding model "${env.MODEL_EMBEDDING_MODEL}" returns ${actual} dimensions but the passage index expects ${expected}. Update MODEL_EMBEDDING_DIMENSIONS and migrate the "Passage"."embedding" column to match.`,
+    StatusCodes.INTERNAL_SERVER_ERROR,
+    ErrorCode.EMBEDDING_FAILED
+  );
+};
+
 // Embed a list of texts into a list of vectors (one per input, in order).
 // Note: the SDK v6 defaults to `encoding_format: 'base64'` and decodes the
 // response itself, so `item.embedding` is always a plain number[] — callers
@@ -78,8 +96,15 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
       input: texts
     });
     const embeddings = response.data.map((item) => item.embedding);
+    assertExpectedDimensions(embeddings[0]?.length);
     return embeddings;
   } catch (error) {
+    // A dimension mismatch is already a precise, actionable message; wrapping
+    // it as a provider failure would bury what it says.
+    if (error instanceof AppError) {
+      throw error;
+    }
+
     // Surface the real provider error (e.g. "401 Incorrect API key") so
     // ingestion failures are diagnosable instead of a generic 500.
     const detail = error instanceof Error ? error.message : String(error);

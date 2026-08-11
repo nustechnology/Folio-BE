@@ -2,8 +2,11 @@
   "name": "nus-express-template",
   "version": "0.0.0",
   "scripts": {
-    "build": "yarn db:generate && tsc --build --clean && tsc && tsc-alias",
+    "build": "yarn db:generate && tsc -b tsconfig.build.json --clean && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
     "lint": "eslint src/**/*.ts --fix --no-warn-ignored",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "start": "node dist/index.js",
     "dev": "yarn db:generate && tsx watch src/index.ts",
     "dev:worker": "tsx watch src/workers/ingestion.worker.ts",
@@ -71,6 +74,7 @@
     "ts-node-dev": "^2.0.0",
     "tsc-alias": "^1.9.1",
     "tsx": "^4.22.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
   }
 }

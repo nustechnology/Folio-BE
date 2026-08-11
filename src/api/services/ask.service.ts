@@ -194,14 +194,39 @@ const streamAnswer = async (
 
   const finish = async (raw: string, stopped: boolean) => {
     const processed = AskPrompt.processAnswer(raw, evidence);
-    const citations = await persistCitations(processed.usedEvidence);
+
+    // An answer that cited nothing still gets its retrieved evidence attached,
+    // so the reader has something to check it against. See the helper for the
+    // cases that must not take this fallback.
+    const unlinked = AskPrompt.shouldAttachUnlinkedEvidence({
+      content: processed.content,
+      usedEvidenceCount: processed.usedEvidence.length,
+      evidenceCount: evidence.length,
+      limitation: processed.limitation,
+      stopped
+    });
+    const cited = unlinked
+      ? evidence.slice(0, ASK.UNLINKED_EVIDENCE_LIMIT)
+      : processed.usedEvidence;
+
+    if (unlinked) {
+      logger.warn('Ask answer cited no evidence', {
+        spaceId,
+        conversationId: conversation.id,
+        messageId,
+        evidenceCount: evidence.length
+      });
+    }
+
+    const citations = await persistCitations(cited);
 
     const limitation =
       processed.limitation ??
       AskPrompt.deriveLimitation({
         citations,
         readySourceCount,
-        scope: scope.type
+        scope: scope.type,
+        unlinked
       });
 
     const assistantMessage: StoredMessage = {
