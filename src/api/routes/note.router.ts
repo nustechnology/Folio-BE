@@ -9,11 +9,13 @@ import {
   validateQuery
 } from '~/api/middlewares/validation.middleware';
 import {
+  noteParamsSchema,
+  spaceIdParamSchema
+} from '~/api/routes/validators/common.validator';
+import {
   convertNoteSchema,
   createNoteSchema,
   listNotesQuerySchema,
-  noteParamsSchema,
-  spaceIdParamSchema,
   updateNoteSchema
 } from '~/api/routes/validators/note.validator';
 
