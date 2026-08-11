@@ -3,10 +3,10 @@ import sanitizeHtml from 'sanitize-html';
 import { NOTE } from '~/api/utils/constants';
 
 /**
- * Formatting the note editor toolbar can produce, plus what a user may paste
- * from a formatted document. Anything else is discarded on save.
+ * Inline formatting and lists, shared by every profile: what any of our
+ * editors can produce, plus what a user may paste from a formatted document.
  */
-const ALLOWED_TAGS = [
+const SHARED_TAGS = [
   'p',
   'br',
   'strong',
@@ -22,35 +22,48 @@ const ALLOWED_TAGS = [
 ];
 
 /**
- * Blocks the editor does not offer but a paste can carry. Rewriting them to
- * paragraphs keeps the text separated — discarding the tag would run the
- * heading into the paragraph that follows it.
+ * Block containers no editor offers. Rewriting them to paragraphs keeps the
+ * text separated — discarding the tag would run the heading into the
+ * paragraph that follows it.
  */
-const BLOCKS_AS_PARAGRAPH = [
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'div',
-  'section',
-  'article',
-  'blockquote',
-  'pre'
-];
+const CONTAINER_BLOCKS = ['div', 'section', 'article', 'pre'];
 
-const blockTransforms = Object.fromEntries(
-  BLOCKS_AS_PARAGRAPH.map((tag) => [tag, 'p'])
-);
+const HEADINGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
 
-export const sanitizeRichText = (html: string): string =>
+type SanitizeProfile = {
+  /** Kept verbatim. */
+  keep: string[];
+  /** Kept as text, rewritten to `<p>`. */
+  demote: string[];
+};
+
+/**
+ * The note editor offers no headings and no blockquote, so both are demoted.
+ * This profile's observable behaviour is pinned by `specs/notes/spec.md`
+ * REQ-004 — widen the notebook profile below instead of touching it.
+ */
+const NOTE_PROFILE: SanitizeProfile = {
+  keep: SHARED_TAGS,
+  demote: [...HEADINGS, ...CONTAINER_BLOCKS, 'blockquote']
+};
+
+/**
+ * The notebook is a report: its editor offers H1–H3 and blockquote, so those
+ * survive. `h4`–`h6` still demote — a pasted `h4` should keep its text rather
+ * than acquire a level the toolbar can never toggle off.
+ */
+const NOTEBOOK_PROFILE: SanitizeProfile = {
+  keep: [...SHARED_TAGS, 'h1', 'h2', 'h3', 'blockquote'],
+  demote: [...HEADINGS.slice(3), ...CONTAINER_BLOCKS]
+};
+
+const sanitize = (html: string, profile: SanitizeProfile): string =>
   sanitizeHtml(html, {
-    allowedTags: [...ALLOWED_TAGS, ...BLOCKS_AS_PARAGRAPH],
+    allowedTags: [...profile.keep, ...profile.demote],
     allowedAttributes: { a: ['href', 'target', 'rel'] },
     allowedSchemes: ['http', 'https', 'mailto'],
     transformTags: {
-      ...blockTransforms,
+      ...Object.fromEntries(profile.demote.map((tag) => [tag, 'p'])),
       a: sanitizeHtml.simpleTransform('a', {
         rel: 'noopener noreferrer nofollow',
         target: '_blank'
@@ -59,7 +72,18 @@ export const sanitizeRichText = (html: string): string =>
     disallowedTagsMode: 'discard'
   });
 
-const BLOCK_BOUNDARY = /<\/(?:p|li)>|<br\s*\/?>/gi;
+export const sanitizeRichText = (html: string): string =>
+  sanitize(html, NOTE_PROFILE);
+
+export const sanitizeNotebookHtml = (html: string): string =>
+  sanitize(html, NOTEBOOK_PROFILE);
+
+/**
+ * Headings and blockquote are boundaries too, for the notebook profile that
+ * keeps them. Note content never reaches here carrying either — they are
+ * demoted to `<p>` before this runs — so the note count is unaffected.
+ */
+const BLOCK_BOUNDARY = /<\/(?:p|li|h1|h2|h3|blockquote)>|<br\s*\/?>/gi;
 const REMAINING_TAGS = /<[^>]*>/g;
 
 /**

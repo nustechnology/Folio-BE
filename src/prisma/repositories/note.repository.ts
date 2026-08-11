@@ -27,6 +27,10 @@ const findManyBySpace = async (
 ) => {
   const where: Prisma.NoteWhereInput = { researchSpaceId };
 
+  if (options.origin !== 'all') {
+    where.originType = options.origin;
+  }
+
   /**
    * Searching `contentText` rather than `content` keeps tag names out of the
    * match: against the markup, `?search=p` or `?search=blank` would hit every
@@ -85,8 +89,56 @@ const create = async (data: {
   });
 };
 
+/**
+ * `contentText` always travels with `content` — search reads only the
+ * projection, so letting the two drift would leave a note findable by wording
+ * it no longer contains.
+ *
+ * Scoped by `researchSpaceId` as well as `id`: the write itself is what keeps a
+ * note id from another space out, so no separate existence check has to stay
+ * true between being read and being acted on. A row that is gone raises Prisma
+ * `P2025`, which the service maps to `NOTE_NOT_FOUND`.
+ */
+const update = async (
+  id: string,
+  researchSpaceId: string,
+  data: {
+    title?: string;
+    content?: string;
+    contentText?: string;
+  }
+) => {
+  return prisma.note.update({
+    where: { id, researchSpaceId },
+    data,
+    include: citationCountInclude
+  });
+};
+
+/**
+ * The join rows must go first: `NoteCitation_noteId_fkey` is `ON DELETE
+ * RESTRICT`, so deleting a note that carries citations fails outright without
+ * this. Dropping the joins discards only the note↔citation links — the
+ * `Citation` rows belong to their source and survive.
+ *
+ * Sources converted from the note also survive, with their snapshotted content
+ * intact: `Source_originalNoteId_fkey` is `ON DELETE SET NULL`, so the source
+ * only loses its back-pointer. That is a schema-level guarantee, not something
+ * this function arranges.
+ *
+ * Space-scoped and `P2025`-raising for the same reason as `update`.
+ */
+const remove = async (id: string, researchSpaceId: string) => {
+  await prisma.$transaction([
+    prisma.noteCitation.deleteMany({ where: { noteId: id } }),
+    prisma.note.delete({ where: { id, researchSpaceId } })
+  ]);
+};
+
 export default {
   findManyBySpace,
   findByIdInSpace,
-  create
+  create,
+  update,
+  remove
 };

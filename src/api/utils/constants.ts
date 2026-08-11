@@ -2,6 +2,18 @@ export const BCRYPT_SALT_ROUNDS = 10;
 
 export const PASSWORD_MIN_LENGTH = 8;
 
+/**
+ * bcrypt only reads the first 72 bytes, so this is not a cryptographic bound —
+ * it is there so an unauthenticated endpoint cannot be handed a megabyte to
+ * hash.
+ */
+export const PASSWORD_MAX_LENGTH = 128;
+
+/** A signed JWT for this payload is well under a kilobyte. */
+export const REFRESH_TOKEN_MAX_LENGTH = 4096;
+
+export const ADDRESS_MAX_LENGTH = 500;
+
 export const NAME = {
   MIN_LENGTH: 1,
   MAX_LENGTH: 100
@@ -16,6 +28,46 @@ export const DURATION_DECIMAL_PRECISION = 2;
 export const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 
 export const SERVER_ERROR_THRESHOLD = 500;
+
+/**
+ * The range within which an error's self-reported status is believable.
+ * Errors from libraries we do not own may carry a `status`; only a client or
+ * server error code is honoured, so a stray property cannot pick a `200`.
+ */
+export const HTTP_STATUS_MIN = 400;
+export const HTTP_STATUS_MAX = 599;
+
+/**
+ * Transport cap for `application/json` request bodies.
+ *
+ * This MUST stay above the largest markup cap declared below — today
+ * `NOTEBOOK.CONTENT_HTML_MAX_LENGTH`. body-parser rejects an oversized body
+ * before any Joi schema runs, so a transport cap under a field cap makes that
+ * field cap unreachable: a payload the API documents as acceptable answers
+ * `413` instead. Raise this whenever a markup cap is raised.
+ *
+ * The two are not in the same unit and cannot be, so this dominates the
+ * character caps only for predominantly-ASCII markup. A document written
+ * entirely in CJK or emoji runs 3–4 bytes per character and could pass the
+ * character cap while exceeding this. That payload is not a real one, which is
+ * why the mismatch is accepted rather than resolved by moving the field caps
+ * to bytes — those stay in the same unit as the field they guard.
+ */
+export const JSON_BODY_LIMIT = '2mb';
+
+/**
+ * Sized for the notebook's debounced auto-save, which fires at most once per
+ * 800 ms while a user types — roughly 75 writes a minute at a sustained pace.
+ * The headroom covers a flush-on-exit and a concurrent note edit without ever
+ * throttling someone who is merely writing quickly.
+ */
+export const RATE_LIMIT = {
+  WRITE_WINDOW_MS: 60_000,
+  WRITE_MAX_REQUESTS: 120
+} as const;
+
+/** The methods the write limiter counts; everything else is skipped. */
+export const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export const NOTE = {
   DEFAULT_TITLE: 'Untitled Note',
@@ -46,6 +98,16 @@ export const ASK = {
     'What problems appear most often?',
     'Where do the sources disagree?'
   ]
+} as const;
+
+/**
+ * Larger than `NOTE` and allowed to be empty: a notebook is a report rather
+ * than a capture, and an unwritten notebook is its normal initial state.
+ */
+export const NOTEBOOK = {
+  CONTENT_MAX_LENGTH: 100_000,
+  /** Abuse guard on the stored markup, which is larger than its plain text. */
+  CONTENT_HTML_MAX_LENGTH: 1_000_000
 } as const;
 
 export const PAGINATION = {

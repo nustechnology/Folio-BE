@@ -4,6 +4,7 @@ import SpaceController from '~/api/controllers/space.controller';
 import AskRouter from '~/api/routes/ask.router';
 import ConversationRouter from '~/api/routes/conversation.router';
 import NoteRouter from '~/api/routes/note.router';
+import NotebookRouter from '~/api/routes/notebook.router';
 import { auth } from '~/api/middlewares/auth.middleware';
 import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import {
@@ -11,10 +12,10 @@ import {
   validateParams,
   validateQuery
 } from '~/api/middlewares/validation.middleware';
+import { spaceIdParamSchema } from '~/api/routes/validators/common.validator';
 import {
   createSpaceSchema,
-  listSpacesQuerySchema,
-  spaceIdParamSchema
+  listSpacesQuerySchema
 } from '~/api/routes/validators/space.validator';
 
 const router = Router();
@@ -37,10 +38,11 @@ router.get(
   '/:spaceId',
   auth,
   validateParams(spaceIdParamSchema),
-  asyncHandler(SpaceController.getById)
+  asyncHandler(SpaceController.get)
 );
 
 router.use('/:spaceId/notes', NoteRouter);
+router.use('/:spaceId/notebook', NotebookRouter);
 router.use('/:spaceId/ask', AskRouter);
 router.use('/:spaceId/conversations', ConversationRouter);
 
