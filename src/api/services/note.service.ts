@@ -3,12 +3,14 @@ import { StatusCodes } from 'http-status-codes';
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
 import { StoredMessage } from '~/api/types/ask';
+import RetrievalService from '~/api/services/retrieval.service';
 import SourceService from '~/api/services/source.service';
 import {
   ConvertNoteInput,
   CreateNoteInput,
   ListNotesOptions,
   NoteOrigin,
+  SavedCitation,
   UpdateNoteInput
 } from '~/api/types/note';
 import { NOTE } from '~/api/utils/constants';
@@ -21,6 +23,7 @@ import { assertSpaceAccess } from '~/api/services/space-access';
 import { OriginType, Prisma } from '~/generated/prisma/client';
 import ConversationRepository from '~/prisma/repositories/conversation.repository';
 import NoteRepository, {
+  NoteDetailRecord,
   NoteRecord
 } from '~/prisma/repositories/note.repository';
 
@@ -44,9 +47,39 @@ const toSummary = (note: NoteRecord) => ({
   contentPreview: toPreview(note.content)
 });
 
-const toDetail = (note: NoteRecord) => ({
+/**
+ * Rebuilds the citation the chat handed out from the row that was linked. The
+ * `Citation` holds the passage and its position; everything about the document
+ * it came from lives on the joined `Source`, so the two are recombined here
+ * rather than denormalized at save time — a renamed source should still print
+ * its current title in a note saved months ago.
+ */
+const toSavedCitation = ({
+  citation
+}: NoteDetailRecord['citationReferences'][number]): SavedCitation => ({
+  id: citation.id,
+  sourceId: citation.source.id,
+  sourceTitle: citation.source.title,
+  sourceType: citation.source.sourceType,
+  sourceAuthor: citation.source.author,
+  passageId: citation.passageId,
+  snippet: citation.supportingPassage,
+  locationLabel: RetrievalService.toLocationLabel(
+    citation.pageReference,
+    citation.sectionReference
+  ),
+  pageReference: citation.pageReference,
+  sectionReference: citation.sectionReference
+});
+
+/**
+ * A single note carries its evidence in cited order: the body keeps plain `[n]`
+ * markers, and position *n* in this list is what they resolve against.
+ */
+const toDetail = ({ citationReferences, ...note }: NoteDetailRecord) => ({
   ...shared(note),
-  content: note.content
+  content: note.content,
+  citations: citationReferences.map(toSavedCitation)
 });
 
 /**

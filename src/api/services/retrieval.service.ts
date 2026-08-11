@@ -130,4 +130,4 @@ const toCitation = (
   sectionReference: item.sectionReference
 });
 
-export default { retrieveEvidence, locateEvidence, toCitation };
+export default { retrieveEvidence, locateEvidence, toCitation, toLocationLabel };

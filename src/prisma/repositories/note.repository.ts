@@ -7,8 +7,33 @@ const citationCountInclude = {
   _count: { select: { citationReferences: true } }
 } satisfies Prisma.NoteInclude;
 
+/**
+ * A single note ships the evidence itself, not just how much of it there is:
+ * the viewer resolves the `[n]` markers in the body against this list, so it
+ * must arrive in the order the answer cited it. The source is joined for the
+ * title/type/author the citation modal prints — the `Citation` row records only
+ * the passage.
+ */
+const citationDetailInclude = {
+  ...citationCountInclude,
+  citationReferences: {
+    orderBy: { position: 'asc' },
+    include: {
+      citation: {
+        include: {
+          source: { select: { id: true, title: true, sourceType: true, author: true } }
+        }
+      }
+    }
+  }
+} satisfies Prisma.NoteInclude;
+
 export type NoteRecord = Prisma.NoteGetPayload<{
   include: typeof citationCountInclude;
+}>;
+
+export type NoteDetailRecord = Prisma.NoteGetPayload<{
+  include: typeof citationDetailInclude;
 }>;
 
 const sortOrderMap: Record<
@@ -61,7 +86,7 @@ const findManyBySpace = async (
 const findByIdInSpace = async (id: string, researchSpaceId: string) => {
   return prisma.note.findFirst({
     where: { id, researchSpaceId },
-    include: citationCountInclude
+    include: citationDetailInclude
   });
 };
 
@@ -73,7 +98,7 @@ const create = async (data: {
   originType: OriginType;
   originConversationId?: string;
   originMessageId?: string;
-  /** Citation rows written when the answer was generated. */
+  /** Citation rows written when the answer was generated, in cited order. */
   citationIds?: string[];
 }) => {
   const { citationIds = [], ...note } = data;
@@ -82,10 +107,13 @@ const create = async (data: {
     data: {
       ...note,
       citationReferences: {
-        create: citationIds.map((citationId) => ({ citationId }))
+        create: citationIds.map((citationId, position) => ({
+          citationId,
+          position
+        }))
       }
     },
-    include: citationCountInclude
+    include: citationDetailInclude
   });
 };
 
@@ -111,7 +139,7 @@ const update = async (
   return prisma.note.update({
     where: { id, researchSpaceId },
     data,
-    include: citationCountInclude
+    include: citationDetailInclude
   });
 };
 

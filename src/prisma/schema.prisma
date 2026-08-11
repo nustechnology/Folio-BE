@@ -176,6 +176,10 @@ model NoteCitation {
   note       Note     @relation(fields: [noteId], references: [id])
   citationId String
   citation   Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
+  /// Rank the citation held in the answer it was saved from. The note body
+  /// carries plain `[n]` markers, so this is what makes marker *n* resolvable
+  /// back to a row — a set with no order would resolve them arbitrarily.
+  position   Int      @default(0)
 
   @@id([noteId, citationId])
   @@index([citationId])

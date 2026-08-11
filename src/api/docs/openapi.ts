@@ -2148,13 +2148,21 @@ export const openApiDocument = {
           },
           {
             type: 'object',
-            required: ['content'],
+            required: ['content', 'citations'],
             properties: {
               content: {
                 type: 'string',
                 description: 'Sanitized rich-text content (HTML)',
                 example:
                   '<p>Scaling laws hold across <strong>three</strong> orders of magnitude.</p>'
+              },
+              citations: {
+                type: 'array',
+                description:
+                  'Evidence this note references, in the order the answer cited it. The `[n]` markers in `content` resolve against this list by position, which is what makes them clickable in the note viewer. Empty for user-created notes.',
+                items: {
+                  $ref: '#/components/schemas/NoteCitation'
+                }
               }
             }
           }
@@ -2314,6 +2322,25 @@ export const openApiDocument = {
             example: 'Methods › Sampling'
           }
         }
+      },
+      NoteCitation: {
+        allOf: [
+          {
+            $ref: '#/components/schemas/AnswerCitation'
+          },
+          {
+            type: 'object',
+            description:
+              'A citation as a saved note carries it. `passageId` is nullable here: rows written before the column existed have none, so the citation still shows its evidence text but cannot deep-link into the reader.',
+            properties: {
+              passageId: {
+                type: 'string',
+                format: 'uuid',
+                nullable: true
+              }
+            }
+          }
+        ]
       },
       ConversationMessage: {
         type: 'object',
