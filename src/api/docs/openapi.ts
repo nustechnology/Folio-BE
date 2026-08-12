@@ -1536,9 +1536,12 @@ export const openApiDocument = {
             name: 'limit',
             in: 'query',
             required: false,
+            description:
+              'Number of conversations to return per page (default: 10, max: 100)',
             schema: {
               type: 'integer',
               minimum: 1,
+              maximum: 100,
               default: 10
             }
           }
@@ -1550,6 +1553,16 @@ export const openApiDocument = {
               'application/json': {
                 schema: {
                   $ref: '#/components/schemas/ListConversationsSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error (invalid space id or paging)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
                 }
               }
             }
@@ -2555,24 +2568,80 @@ export const openApiDocument = {
           }
         }
       },
+      // Spelled out rather than composed from `AnswerCitation` with `allOf`:
+      // `allOf` intersects, so a branch relaxing `passageId` to nullable cannot
+      // loosen the non-nullable `passageId` the base schema requires — the
+      // composed contract still rejects the `null` that `SavedCitation`
+      // (`src/api/types/note.ts`) returns. Every other property is identical to
+      // `AnswerCitation` by intent; they describe the same citation.
       NoteCitation: {
-        allOf: [
-          {
-            $ref: '#/components/schemas/AnswerCitation'
-          },
-          {
-            type: 'object',
+        type: 'object',
+        description:
+          'A citation as a saved note carries it. `passageId` is nullable here: rows written before the column existed have none, so the citation still shows its evidence text but cannot deep-link into the reader.',
+        required: [
+          'id',
+          'sourceId',
+          'sourceTitle',
+          'sourceType',
+          'sourceAuthor',
+          'passageId',
+          'snippet',
+          'locationLabel',
+          'pageReference',
+          'sectionReference'
+        ],
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid',
             description:
-              'A citation as a saved note carries it. `passageId` is nullable here: rows written before the column existed have none, so the citation still shows its evidence text but cannot deep-link into the reader.',
-            properties: {
-              passageId: {
-                type: 'string',
-                format: 'uuid',
-                nullable: true
-              }
-            }
+              'Citation record. Saving the answer as a note links this row.'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceTitle: {
+            type: 'string',
+            example: 'Onboarding Benchmark Report'
+          },
+          sourceType: {
+            type: 'string',
+            enum: ['File', 'Web', 'Manual']
+          },
+          sourceAuthor: {
+            type: 'string',
+            nullable: true
+          },
+          passageId: {
+            type: 'string',
+            format: 'uuid',
+            nullable: true,
+            description:
+              'Indexed passage the claim came from, or `null` for a note saved before the column existed. The reader deep-links to it as `#evidence-passage-{passageId}`.'
+          },
+          snippet: {
+            type: 'string',
+            description: 'The cited passage text, verbatim.'
+          },
+          locationLabel: {
+            type: 'string',
+            nullable: true,
+            description:
+              'Human-readable position, derived from the page markers the extractor left in the text or the passage heading path.',
+            example: 'Page 14'
+          },
+          pageReference: {
+            type: 'string',
+            nullable: true,
+            example: '14'
+          },
+          sectionReference: {
+            type: 'string',
+            nullable: true,
+            example: 'Methods › Sampling'
           }
-        ]
+        }
       },
       ConversationMessage: {
         type: 'object',

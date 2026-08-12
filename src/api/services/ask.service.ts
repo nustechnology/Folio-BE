@@ -18,6 +18,7 @@ import {
 } from '~/api/types/ask';
 import { ASK } from '~/api/utils/constants';
 import logger from '~/config/logger';
+import { Prisma } from '~/generated/prisma/client';
 import CitationRepository, {
   NewCitation
 } from '~/prisma/repositories/citation.repository';
@@ -303,6 +304,29 @@ const streamAnswer = async (
  * `findByIdInSpace` filters by space, which is not the same as an ownership
  * check — every caller has to clear `assertSpaceAccess` first.
  */
+const conversationNotFound = () =>
+  new AppError(
+    'Conversation not found.',
+    StatusCodes.NOT_FOUND,
+    ErrorCode.CONVERSATION_NOT_FOUND
+  );
+
+/**
+ * A conversation that vanished between being addressed and being written is
+ * reported as missing, not as a server fault: `P2025` is what Prisma raises when
+ * a space-scoped `where` matches nothing, and two tabs deleting the same
+ * conversation would otherwise answer `500` for the loser.
+ */
+const asConversationNotFound = (error: unknown): never => {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2025'
+  ) {
+    throw conversationNotFound();
+  }
+  throw error;
+};
+
 const requireConversationInSpace = async (
   conversationId: string,
   spaceId: string
@@ -312,11 +336,7 @@ const requireConversationInSpace = async (
     spaceId
   );
   if (!conversation) {
-    throw new AppError(
-      'Conversation not found.',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.CONVERSATION_NOT_FOUND
-    );
+    throw conversationNotFound();
   }
   return conversation;
 };
@@ -353,12 +373,12 @@ const renameConversation = async (
   title: string
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
-  await requireConversationInSpace(conversationId, spaceId);
 
   const conversation = await ConversationRepository.updateTitle(
     conversationId,
+    spaceId,
     title
-  );
+  ).catch(asConversationNotFound);
 
   return {
     id: conversation.id,
@@ -379,9 +399,14 @@ const deleteConversation = async (
   conversationId: string
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
-  await requireConversationInSpace(conversationId, spaceId);
 
-  await ConversationRepository.deleteWithNoteDetach(conversationId);
+  const deleted = await ConversationRepository.deleteWithNoteDetach(
+    conversationId,
+    spaceId
+  );
+  if (!deleted) {
+    throw conversationNotFound();
+  }
 
   return { id: conversationId };
 };

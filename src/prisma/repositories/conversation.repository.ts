@@ -80,7 +80,11 @@ const findManyBySpace = async (
     prisma.conversation.findMany({
       where,
       select: { id: true, title: true, createdAt: true, updatedAt: true },
-      orderBy: { updatedAt: 'desc' },
+      // `id` breaks ties: `updatedAt` alone leaves rows touched in the same
+      // transaction (or the same clock tick) in whatever order the plan
+      // produces, which offset pagination turns into rows repeated on one page
+      // and missing from another.
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       skip: (options.page - 1) * options.limit,
       take: options.limit
     }),
@@ -90,8 +94,21 @@ const findManyBySpace = async (
   return { conversations, totalCount };
 };
 
-const updateTitle = async (id: string, title: string) => {
-  return prisma.conversation.update({ where: { id }, data: { title } });
+/**
+ * Scoped by `researchSpaceId` as well as `id`, so the write itself is what keeps
+ * a conversation id from another space out — no separate existence check has to
+ * stay true between being read and being acted on. A row that is gone raises
+ * Prisma `P2025`, which the service maps to `CONVERSATION_NOT_FOUND`.
+ */
+const updateTitle = async (
+  id: string,
+  researchSpaceId: string,
+  title: string
+) => {
+  return prisma.conversation.update({
+    where: { id, researchSpaceId },
+    data: { title }
+  });
 };
 
 /**
@@ -106,15 +123,35 @@ const updateTitle = async (id: string, title: string) => {
  *
  * `originType` is left as `SavedAssistantAnswer`: the note is still a saved
  * answer, it just no longer has a thread to point at.
+ *
+ * The row is locked before the detach, which is what makes "both are cleared"
+ * true of notes saved concurrently. `Note.originConversationId` is a foreign
+ * key, so inserting a note against this conversation takes `FOR KEY SHARE` on
+ * this row; `FOR UPDATE` conflicts with that, so the insert blocks here instead
+ * of landing between the detach and the delete. Without the lock that insert
+ * commits inside the window, the delete's `SetNull` clears its
+ * `originConversationId`, and its `originMessageId` is left pointing at a
+ * message that no longer exists — the state this function exists to prevent.
+ *
+ * Scoped by `researchSpaceId` for the same reason as `updateTitle`; returns
+ * false when nothing matched, which the service maps to
+ * `CONVERSATION_NOT_FOUND`.
  */
-const deleteWithNoteDetach = async (id: string) => {
-  await prisma.$transaction([
-    prisma.note.updateMany({
+const deleteWithNoteDetach = async (
+  id: string,
+  researchSpaceId: string
+): Promise<boolean> => {
+  return prisma.$transaction(async (tx) => {
+    if (!(await lockConversation(tx, id, researchSpaceId))) {
+      return false;
+    }
+    await tx.note.updateMany({
       where: { originConversationId: id },
       data: { originConversationId: null, originMessageId: null }
-    }),
-    prisma.conversation.delete({ where: { id } })
-  ]);
+    });
+    await tx.conversation.delete({ where: { id } });
+    return true;
+  });
 };
 
 const getMessages = async (
@@ -136,15 +173,22 @@ const getMessages = async (
  * lock so the second transaction waits, then re-reads the committed array
  * (Read Committed takes a fresh snapshot per statement) before writing.
  *
- * Returns false when the row does not exist.
+ * Returns false when the row does not exist — or, when `researchSpaceId` is
+ * given, when it exists in a different space, so callers that must not act
+ * across spaces can use the lock as their scope check.
  */
 const lockConversation = async (
   tx: Prisma.TransactionClient,
-  id: string
+  id: string,
+  researchSpaceId?: string
 ): Promise<boolean> => {
-  const locked = await tx.$queryRaw<
-    { id: string }[]
-  >`SELECT "id" FROM "Conversation" WHERE "id" = ${id} FOR UPDATE`;
+  const scope =
+    researchSpaceId === undefined
+      ? Prisma.empty
+      : Prisma.sql` AND "researchSpaceId" = ${researchSpaceId}`;
+  const locked = await tx.$queryRaw<{ id: string }[]>(
+    Prisma.sql`SELECT "id" FROM "Conversation" WHERE "id" = ${id}${scope} FOR UPDATE`
+  );
   return locked.length > 0;
 };
 

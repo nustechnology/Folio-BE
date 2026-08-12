@@ -14,10 +14,25 @@ const citationCountInclude = {
  * title/type/author the citation modal prints — the `Citation` row records only
  * the passage.
  */
+/*
+ * The secondary keys are what make the ordering deterministic for notes saved
+ * before `position` existed: migration `20260811000000_add_note_citation_position`
+ * left every one of their rows at the default `0`, and its claim that "their
+ * markers resolve in insertion order" holds only if something breaks the tie —
+ * Postgres is free to return equal keys in any order, so the same note could
+ * print `[1]` and `[2]` against different evidence on consecutive reads.
+ * `citation.createdAt` is the closest stand-in for insertion order the schema
+ * kept; `citationId` settles rows written inside one transaction, where that
+ * timestamp is identical.
+ */
 const citationDetailInclude = {
   ...citationCountInclude,
   citationReferences: {
-    orderBy: { position: 'asc' },
+    orderBy: [
+      { position: 'asc' },
+      { citation: { createdAt: 'asc' } },
+      { citationId: 'asc' }
+    ],
     include: {
       citation: {
         include: {

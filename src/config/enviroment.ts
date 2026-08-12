@@ -75,7 +75,7 @@ export const env: EnvInterface = {
     process.env.MODEL_EMBEDDING_BASE_URL || 'https://api.openai.com/v1',
   MODEL_EMBEDDING_API_KEY: process.env.MODEL_EMBEDDING_API_KEY || '',
   // The defaults describe the migrated schema: `Passage.embedding` is
-  // `vector(1024)` (migration `20260811120000_embedding_dimensions_1024`) and
+  // `vector(1024)` (migration `20260811120000_embedding_model_bge_m3`) and
   // bge-m3 is the model that width was chosen for. Changing either means
   // changing both, plus a migration — the guard in `model-gateway.service.ts`
   // enforces that they agree.
