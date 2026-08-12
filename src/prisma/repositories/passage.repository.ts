@@ -14,7 +14,7 @@ export type NewPassage = {
 // source, then insert the supplied passages — all in one transaction. Also
 // handles the zero-passages case (a re-ingested source that now yields no
 // passages still gets its stale rows removed). Uses raw SQL because Prisma
-// cannot write the `Unsupported("vector(768)")` embedding column via the normal
+// cannot write the `Unsupported("vector(1024)")` embedding column via the normal
 // client API — each vector is serialized as a Postgres literal
 // (`'[...]'::vector`).
 const replaceBySourceId = async (

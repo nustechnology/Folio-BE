@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 
 import { AppError } from '~/api/errors/app.error';
-import { successResponse } from '~/api/routes/response';
+import { paginatedResponse, successResponse } from '~/api/routes/response';
 import AskService from '~/api/services/ask.service';
 import AskSuggestionService from '~/api/services/ask-suggestion.service';
 import { openEventStream, EventStream } from '~/api/services/sse.service';
@@ -74,6 +74,23 @@ const suggestions = async (req: Request, res: Response) => {
   return successResponse(res, result);
 };
 
+const listConversations = async (req: Request, res: Response) => {
+  const { spaceId } = req.params as { spaceId: string };
+  const { search, page, limit } = req.query as unknown as {
+    search?: string;
+    page: number;
+    limit: number;
+  };
+
+  const { conversations, pagination } = await AskService.listConversations(
+    req.userId!,
+    spaceId,
+    { search, page, limit }
+  );
+
+  return paginatedResponse(res, 'conversations', conversations, pagination);
+};
+
 const getConversation = async (req: Request, res: Response) => {
   const { spaceId, conversationId } = req.params as {
     spaceId: string;
@@ -86,6 +103,36 @@ const getConversation = async (req: Request, res: Response) => {
     conversationId
   );
   return successResponse(res, { conversation });
+};
+
+const renameConversation = async (req: Request, res: Response) => {
+  const { spaceId, conversationId } = req.params as {
+    spaceId: string;
+    conversationId: string;
+  };
+  const { title } = req.body as { title: string };
+
+  const conversation = await AskService.renameConversation(
+    req.userId!,
+    spaceId,
+    conversationId,
+    title
+  );
+  return successResponse(res, { conversation });
+};
+
+const deleteConversation = async (req: Request, res: Response) => {
+  const { spaceId, conversationId } = req.params as {
+    spaceId: string;
+    conversationId: string;
+  };
+
+  const result = await AskService.deleteConversation(
+    req.userId!,
+    spaceId,
+    conversationId
+  );
+  return successResponse(res, result);
 };
 
 const recordFeedback = async (req: Request, res: Response) => {
@@ -106,4 +153,12 @@ const recordFeedback = async (req: Request, res: Response) => {
   return successResponse(res, result);
 };
 
-export default { ask, suggestions, getConversation, recordFeedback };
+export default {
+  ask,
+  suggestions,
+  listConversations,
+  getConversation,
+  renameConversation,
+  deleteConversation,
+  recordFeedback
+};

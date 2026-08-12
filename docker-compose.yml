@@ -1,28 +1,58 @@
+# api and worker are the same image with the same wiring; only the published
+# port and the command differ.
+x-folio-service: &folio-service
+  build:
+    context: .
+  restart: unless-stopped
+  env_file:
+    - .env
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+  environment:
+    # .env carries host-mode values (localhost); inside the network these live
+    # on their compose services. Ollama is the exception: it runs on the host,
+    # reached through the gateway below.
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    MINIO_ENDPOINT: minio
+    MINIO_PORT: 9000
+    MODEL_EMBEDDING_BASE_URL: ${MODEL_EMBEDDING_BASE_URL_DOCKER:-http://host.docker.internal:11434/v1}
+    # Overridden rather than left to the fallback in `src/config/enviroment.ts`:
+    # that fallback reads MODEL_EMBEDDING_BASE_URL, which is correct only while
+    # MODEL_CHAT_BASE_URL is blank. A .env that sets it for host mode
+    # (`http://localhost:11434/v1`) would otherwise reach into the container,
+    # where localhost is the container itself. The nested default keeps chat
+    # following embeddings, so a cloud endpoint set through
+    # MODEL_EMBEDDING_BASE_URL_DOCKER still serves both.
+    MODEL_CHAT_BASE_URL: ${MODEL_CHAT_BASE_URL_DOCKER:-${MODEL_EMBEDDING_BASE_URL_DOCKER:-http://host.docker.internal:11434/v1}}
+  # Docker Desktop resolves this name already; Linux hosts need the mapping.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    # Without this, the tsx watch in `yarn dev` watches image-baked source.
+    - ./src:/app/src
+    # Anonymous volume: each service generates its own Prisma client on boot,
+    # so they never race writing one directory. Safe because the Prisma 7
+    # driver-adapter client is pure TypeScript, no native engine binaries.
+    - /app/src/generated
+
 services:
   api:
-    build:
-      context: .
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      # ensureBucket() runs at boot, before the server listens.
-      minio:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      # .env carries host-mode values (localhost); inside the network the
-      # bucket lives on the minio service, same as db/redis above.
-      MINIO_ENDPOINT: minio
-      MINIO_PORT: 9000
+    <<: *folio-service
     ports:
       - "${PORT:-4000}:${PORT:-4000}"
+
+  # Consumes the BullMQ `ingestion` queue; without it sources never leave
+  # `added`. `yarn dev:worker` is only tsx watch, so db:generate must run first.
+  worker:
+    <<: *folio-service
+    command: sh -c "yarn db:generate && yarn dev:worker"
 
   db:
     image: pgvector/pgvector:pg16
@@ -36,11 +66,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}",
-        ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -58,6 +84,7 @@ services:
       timeout: 5s
       retries: 10
 
+  # The bucket itself is created by ensureBucket() at API boot (src/index.ts).
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -75,17 +102,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-
-  minio-create-bucket:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
-      mc mb --ignore-existing local/${MINIO_BUCKET_NAME:-folio-sources};
-      "
 
 volumes:
   postgres_data:

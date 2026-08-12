@@ -88,11 +88,32 @@ export const ASK = {
   HISTORY_MESSAGE_LIMIT: 12,
   /** Marker the model ends on when it wants to caveat its own answer. */
   LIMITATION_PREFIX: 'LIMITATION:',
+  /**
+   * Largest number a bracketed run may contain and still be read as a citation.
+   * Retrieval returns single digits of evidence, so `[7]` against 5 passages is
+   * a hallucinated marker worth dropping — while `[2023]` or `[2020-2024]` is a
+   * year the model wrote as prose, and deleting it would change what the answer
+   * says.
+   */
+  PLAUSIBLE_MARKER_MAX: 50,
   SUGGESTION_COUNT: 3,
   /** Characters of a document handed to the model when drafting suggestions. */
   SUGGESTION_CONTEXT_CHARS: 4_000,
   NO_EVIDENCE_ANSWER:
     'No indexed evidence in the selected scope bears on that question. Try rephrasing it, widening the scope to the entire space, or adding a source that covers the topic.',
+  /**
+   * How many retrieved passages are attached to an answer that cited none of
+   * them. Enough to check the claim against, few enough that the evidence list
+   * stays a list rather than a dump of the whole retrieval.
+   */
+  UNLINKED_EVIDENCE_LIMIT: 3,
+  /**
+   * Shown when the model wrote an answer without citing anything. The evidence
+   * below such an answer is what retrieval supplied, not what the model was
+   * demonstrably reading — the wording must not imply otherwise.
+   */
+  UNLINKED_EVIDENCE_LIMITATION:
+    'This answer carries no inline citations, so its claims could not be tied to specific passages. The evidence below was retrieved for this question — verify the answer against it before relying on it.',
   DEFAULT_SUGGESTIONS: [
     'Summarize all the evidence.',
     'What problems appear most often?',

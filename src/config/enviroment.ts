@@ -74,9 +74,13 @@ export const env: EnvInterface = {
   MODEL_EMBEDDING_BASE_URL:
     process.env.MODEL_EMBEDDING_BASE_URL || 'https://api.openai.com/v1',
   MODEL_EMBEDDING_API_KEY: process.env.MODEL_EMBEDDING_API_KEY || '',
-  MODEL_EMBEDDING_MODEL:
-    process.env.MODEL_EMBEDDING_MODEL || 'text-embedding-3-small',
-  MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1536',
+  // The defaults describe the migrated schema: `Passage.embedding` is
+  // `vector(1024)` (migration `20260811120000_embedding_model_bge_m3`) and
+  // bge-m3 is the model that width was chosen for. Changing either means
+  // changing both, plus a migration — the guard in `model-gateway.service.ts`
+  // enforces that they agree.
+  MODEL_EMBEDDING_MODEL: process.env.MODEL_EMBEDDING_MODEL || 'bge-m3',
+  MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1024',
   // Generation runs through the same OpenAI-compatible surface as embeddings
   // and defaults to the embedding endpoint's host, so a single local Ollama (or
   // a single cloud key) serves both without extra configuration.
@@ -118,5 +122,16 @@ const missing = [
 if (missing.length > 0) {
   throw new Error(
     `Missing required environment variable(s): ${missing.join(', ')}`
+  );
+}
+
+// Caught at startup rather than at request time: a non-numeric value would make
+// the dimension guard in `model-gateway.service.ts` silently pass everything,
+// and the mismatch would resurface as a Postgres type error deep inside an
+// INSERT that names neither the model nor the setting behind it.
+const dimensions = Number(env.MODEL_EMBEDDING_DIMENSIONS);
+if (!Number.isInteger(dimensions) || dimensions <= 0) {
+  throw new Error(
+    `MODEL_EMBEDDING_DIMENSIONS must be a positive integer, got "${env.MODEL_EMBEDDING_DIMENSIONS}".`
   );
 }

@@ -11,14 +11,14 @@ import PassageRepository from '~/prisma/repositories/passage.repository';
 // measured, and topic breakpoints chosen where distance spikes. Units between
 // breakpoints are merged into passages, which then get their own embeddings
 // and are stored in pgvector.
-type Unit = {
+export type Unit = {
   text: string;
   blockIndex: number;
   order: number;
   headingPath: string[];
 };
 
-type AssembledPassage = {
+export type AssembledPassage = {
   content: string;
   locator: {
     blockRange: [number, number];
@@ -129,30 +129,40 @@ const buildPassage = (group: Unit[]): AssembledPassage => {
 };
 
 // Stage 7 — cut units into passages at breakpoints, and also force a boundary
-// once the running passage reaches CHUNK_TARGET_TOKENS so passages stay within
-// the embedding model's input limit.
-const assemblePassages = (
+// once the running passage reaches `targetTokens` so passages stay within the
+// embedding model's input limit.
+//
+// `targetTokens` is a parameter rather than a read of `CHUNK_TARGET_TOKENS`
+// inside the loop: it makes the boundary rule a pure function of its inputs,
+// which is the only part of this pipeline testable without a database or a
+// model provider. `chunkAndEmbed` supplies the configured value.
+export const assemblePassages = (
   units: Unit[],
-  breakpoints: Set<number>
+  breakpoints: Set<number>,
+  targetTokens: number
 ): AssembledPassage[] => {
   const passages: AssembledPassage[] = [];
-  const targetTokens = Number(env.CHUNK_TARGET_TOKENS);
   let start = 0;
 
+  // Each unit is counted once and accumulated. Re-joining the growing slice and
+  // re-counting it every iteration was quadratic in the document length — cheap
+  // while `estimateTokens` was a division on `text.length`, but it now scans
+  // every character to price non-ASCII separately, and a large source blocks the
+  // event loop for the duration.
+  //
+  // The running sum trades the join spaces for per-unit rounding, so it drifts
+  // from the old per-slice estimate by a token or two in either direction
+  // (measured −1..+2 over synthetic passages) — inside the estimator's own
+  // error bar, and it no longer re-scans the whole prefix every iteration.
+  const unitTokens = units.map((unit) => estimateTokens(unit.text));
+  let running = 0;
+
   for (let i = 0; i < units.length; i++) {
-    if (breakpoints.has(i)) {
+    running += unitTokens[i];
+    if (breakpoints.has(i) || running >= targetTokens) {
       passages.push(buildPassage(units.slice(start, i + 1)));
       start = i + 1;
-    } else if (
-      estimateTokens(
-        units
-          .slice(start, i + 1)
-          .map((u) => u.text)
-          .join(' ')
-      ) >= targetTokens
-    ) {
-      passages.push(buildPassage(units.slice(start, i + 1)));
-      start = i + 1;
+      running = 0;
     }
   }
 
@@ -203,7 +213,11 @@ export const chunkAndEmbed = async (
   const breakpoints = computeBreakpoints(units, unitEmbeddings);
 
   // Stage 7-8 — assemble passages with locator metadata.
-  const passages = assemblePassages(units, breakpoints);
+  const passages = assemblePassages(
+    units,
+    breakpoints,
+    Number(env.CHUNK_TARGET_TOKENS)
+  );
 
   // Stage 9 — embed the assembled passages (pass 2).
   const passageEmbeddings = await embedBatches(passages.map((p) => p.content));

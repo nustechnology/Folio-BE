@@ -1,6 +1,6 @@
 import Joi from 'joi';
 
-import { ASK } from '~/api/utils/constants';
+import { ASK, PAGINATION } from '~/api/utils/constants';
 
 export const spaceIdParamSchema = Joi.object({
   spaceId: Joi.string().uuid().required()
@@ -49,4 +49,36 @@ export const suggestionsQuerySchema = Joi.object({
 
 export const feedbackSchema = Joi.object({
   rating: Joi.string().valid('useful', 'not_useful').required()
+});
+
+/**
+ * History is always most-recently-answered first, so there is no `sort` — the
+ * rest mirrors the notes list so the two screens paginate identically.
+ */
+export const listConversationsQuerySchema = Joi.object({
+  search: Joi.string().allow('').optional(),
+  page: Joi.number().integer().min(1).default(PAGINATION.DEFAULT_PAGE),
+  limit: Joi.number()
+    .integer()
+    .min(1)
+    .max(PAGINATION.MAX_LIMIT)
+    .default(PAGINATION.DEFAULT_LIMIT)
+});
+
+/**
+ * The same ceiling `ask.service` applies when it derives a title from the
+ * opening question, so a renamed conversation cannot outgrow the row it is
+ * rendered in.
+ */
+export const renameConversationSchema = Joi.object({
+  title: Joi.string()
+    .trim()
+    .min(1)
+    .max(ASK.TITLE_MAX_LENGTH)
+    .required()
+    .messages({
+      'string.empty': 'A title is required',
+      'any.required': 'A title is required',
+      'string.max': `A title cannot exceed ${ASK.TITLE_MAX_LENGTH} characters`
+    })
 });

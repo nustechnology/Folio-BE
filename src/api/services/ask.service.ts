@@ -18,10 +18,13 @@ import {
 } from '~/api/types/ask';
 import { ASK } from '~/api/utils/constants';
 import logger from '~/config/logger';
+import { Prisma } from '~/generated/prisma/client';
 import CitationRepository, {
   NewCitation
 } from '~/prisma/repositories/citation.repository';
-import ConversationRepository from '~/prisma/repositories/conversation.repository';
+import ConversationRepository, {
+  ListConversationsOptions
+} from '~/prisma/repositories/conversation.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 
@@ -194,14 +197,39 @@ const streamAnswer = async (
 
   const finish = async (raw: string, stopped: boolean) => {
     const processed = AskPrompt.processAnswer(raw, evidence);
-    const citations = await persistCitations(processed.usedEvidence);
+
+    // An answer that cited nothing still gets its retrieved evidence attached,
+    // so the reader has something to check it against. See the helper for the
+    // cases that must not take this fallback.
+    const unlinked = AskPrompt.shouldAttachUnlinkedEvidence({
+      content: processed.content,
+      usedEvidenceCount: processed.usedEvidence.length,
+      evidenceCount: evidence.length,
+      limitation: processed.limitation,
+      stopped
+    });
+    const cited = unlinked
+      ? evidence.slice(0, ASK.UNLINKED_EVIDENCE_LIMIT)
+      : processed.usedEvidence;
+
+    if (unlinked) {
+      logger.warn('Ask answer cited no evidence', {
+        spaceId,
+        conversationId: conversation.id,
+        messageId,
+        evidenceCount: evidence.length
+      });
+    }
+
+    const citations = await persistCitations(cited);
 
     const limitation =
       processed.limitation ??
       AskPrompt.deriveLimitation({
         citations,
         readySourceCount,
-        scope: scope.type
+        scope: scope.type,
+        unlinked
       });
 
     const assistantMessage: StoredMessage = {
@@ -272,6 +300,117 @@ const streamAnswer = async (
   await finish(raw, signal.aborted);
 };
 
+/**
+ * `findByIdInSpace` filters by space, which is not the same as an ownership
+ * check — every caller has to clear `assertSpaceAccess` first.
+ */
+const conversationNotFound = () =>
+  new AppError(
+    'Conversation not found.',
+    StatusCodes.NOT_FOUND,
+    ErrorCode.CONVERSATION_NOT_FOUND
+  );
+
+/**
+ * A conversation that vanished between being addressed and being written is
+ * reported as missing, not as a server fault: `P2025` is what Prisma raises when
+ * a space-scoped `where` matches nothing, and two tabs deleting the same
+ * conversation would otherwise answer `500` for the loser.
+ */
+const asConversationNotFound = (error: unknown): never => {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2025'
+  ) {
+    throw conversationNotFound();
+  }
+  throw error;
+};
+
+const requireConversationInSpace = async (
+  conversationId: string,
+  spaceId: string
+) => {
+  const conversation = await ConversationRepository.findByIdInSpace(
+    conversationId,
+    spaceId
+  );
+  if (!conversation) {
+    throw conversationNotFound();
+  }
+  return conversation;
+};
+
+/**
+ * History list. Rows carry no message count or preview on purpose — see
+ * `ConversationRepository.findManyBySpace`.
+ */
+const listConversations = async (
+  ownerId: string,
+  spaceId: string,
+  options: ListConversationsOptions
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const { conversations, totalCount } =
+    await ConversationRepository.findManyBySpace(spaceId, options);
+
+  return {
+    conversations,
+    pagination: {
+      page: options.page,
+      limit: options.limit,
+      totalCount,
+      totalPages: Math.ceil(totalCount / options.limit)
+    }
+  };
+};
+
+const renameConversation = async (
+  ownerId: string,
+  spaceId: string,
+  conversationId: string,
+  title: string
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const conversation = await ConversationRepository.updateTitle(
+    conversationId,
+    spaceId,
+    title
+  ).catch(asConversationNotFound);
+
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt
+  };
+};
+
+/**
+ * Notes saved from this conversation survive it — the user kept them
+ * deliberately — with both origin columns cleared. See
+ * `ConversationRepository.deleteWithNoteDetach`.
+ */
+const deleteConversation = async (
+  ownerId: string,
+  spaceId: string,
+  conversationId: string
+) => {
+  await assertSpaceAccess(spaceId, ownerId);
+
+  const deleted = await ConversationRepository.deleteWithNoteDetach(
+    conversationId,
+    spaceId
+  );
+  if (!deleted) {
+    throw conversationNotFound();
+  }
+
+  return { id: conversationId };
+};
+
 const getConversation = async (
   ownerId: string,
   spaceId: string,
@@ -279,17 +418,10 @@ const getConversation = async (
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
 
-  const conversation = await ConversationRepository.findByIdInSpace(
+  const conversation = await requireConversationInSpace(
     conversationId,
     spaceId
   );
-  if (!conversation) {
-    throw new AppError(
-      'Conversation not found.',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.CONVERSATION_NOT_FOUND
-    );
-  }
 
   return {
     id: conversation.id,
@@ -311,18 +443,7 @@ const recordFeedback = async (
   rating: MessageFeedback
 ) => {
   await assertSpaceAccess(spaceId, ownerId);
-
-  const conversation = await ConversationRepository.findByIdInSpace(
-    conversationId,
-    spaceId
-  );
-  if (!conversation) {
-    throw new AppError(
-      'Conversation not found.',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.CONVERSATION_NOT_FOUND
-    );
-  }
+  await requireConversationInSpace(conversationId, spaceId);
 
   const message = await ConversationRepository.updateMessage(
     conversationId,
@@ -343,6 +464,9 @@ const recordFeedback = async (
 export default {
   assertSpaceAccess,
   streamAnswer,
+  listConversations,
   getConversation,
+  renameConversation,
+  deleteConversation,
   recordFeedback
 };
