@@ -6,11 +6,13 @@ import { auth } from '~/api/middlewares/auth.middleware';
 import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import {
   validateBody,
+  validateParams,
   validateQuery
 } from '~/api/middlewares/validation.middleware';
 import {
   createSpaceSchema,
-  listSpacesQuerySchema
+  listSpacesQuerySchema,
+  spaceIdParamSchema
 } from '~/api/routes/validators/space.validator';
 
 const router = Router();
@@ -27,6 +29,14 @@ router.post(
   auth,
   validateBody(createSpaceSchema),
   asyncHandler(SpaceController.create)
+);
+
+// Backs the space name in the sources list and source reader breadcrumbs.
+router.get(
+  '/:spaceId',
+  auth,
+  validateParams(spaceIdParamSchema),
+  asyncHandler(SpaceController.getById)
 );
 
 router.use('/:spaceId/notes', NoteRouter);
