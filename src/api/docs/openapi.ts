@@ -384,6 +384,77 @@ export const openApiDocument = {
         }
       }
     },
+    '/api/v1/spaces/{spaceId}': {
+      get: {
+        tags: ['Spaces'],
+        summary: 'Get a single space',
+        description:
+          'Returns one space owned by the authenticated user, in the same shape as an entry of the list response (including `sourceCount` and `noteCount`). Backs the space name in the breadcrumbs on the sources list and the source reader. A space owned by someone else answers 404, not 403, so the response cannot be used to probe which ids exist.',
+        operationId: 'getSpace',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            $ref: '#/components/parameters/SpaceIdPath'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Space returned',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      example: 'success'
+                    },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        space: {
+                          $ref: '#/components/schemas/Space'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Malformed space id',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Space not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
     '/api/v1/sources': {
       post: {
         tags: ['Sources'],
@@ -1006,6 +1077,73 @@ export const openApiDocument = {
           },
           '404': {
             description: 'Source not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/media/{fileName}': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Get an image extracted from a source document',
+        description:
+          'Streams an image that the parser pulled out of an uploaded DOCX or EPUB. The reader HTML in `structuredContent` references these by root-relative URL, so the web client resolves them against the API origin. Unauthenticated by necessity — a browser cannot attach a bearer token to an `<img>` tag — so access is gated on knowing the source UUID and the file name, which is a content hash generated at ingestion time.',
+        operationId: 'getSourceMedia',
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'fileName',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              pattern: '^[0-9a-f]{32}\\.[a-z0-9]{2,4}$'
+            },
+            description:
+              'Content-addressed file name, e.g. `9f2c…a10.png`. Any other shape is rejected.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Image stream',
+            content: {
+              'image/*': {
+                schema: {
+                  type: 'string',
+                  format: 'binary'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Malformed source id or file name',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '404': {
+            description: 'Media not found',
             content: {
               'application/json': {
                 schema: {

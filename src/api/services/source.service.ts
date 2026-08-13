@@ -9,7 +9,12 @@ import { env } from '~/config/enviroment';
 import { BUCKET_NAME } from '~/config/minio';
 import { ListSourceOptions } from '~/api/types/source';
 import { getContentType } from '~/api/utils/file.util';
-import { deleteObject, uploadFile } from '~/api/utils/minio.util';
+import {
+  deleteObject,
+  deleteObjectsByPrefix,
+  uploadFile
+} from '~/api/utils/minio.util';
+import { mediaPrefix, openMedia } from '~/api/services/media.service';
 import {
   computeFileHash,
   verifyFileSignature
@@ -236,6 +241,14 @@ const remove = async (sourceId: string, userId: string) => {
     }
   }
 
+  // Extracted images live under their own prefix and would otherwise be left
+  // behind.
+  try {
+    await deleteObjectsByPrefix(mediaPrefix(sourceId));
+  } catch {
+    // Nothing stored, or storage is unavailable — the record still goes.
+  }
+
   await SourceRepository.deleteById(sourceId);
   return { success: true };
 };
@@ -314,6 +327,28 @@ const getPreviewUrl = async (
   return null;
 };
 
+// No ownership check: <img> tags carry no bearer token, so access is gated on
+// knowing the source UUID and the content hash. The response type is pinned to
+// an image so a stored object can never be served as anything executable.
+const getMedia = async (sourceId: string, fileName: string) => {
+  try {
+    const media = await openMedia(sourceId, fileName);
+    return {
+      stream: media.stream,
+      contentType: media.contentType?.startsWith('image/')
+        ? media.contentType
+        : 'application/octet-stream',
+      contentLength: media.contentLength
+    };
+  } catch {
+    throw new AppError(
+      'Media not found',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SOURCE_NOT_FOUND
+    );
+  }
+};
+
 export default {
   createFile,
   createWeb,
@@ -323,5 +358,6 @@ export default {
   update,
   remove,
   retry,
-  getPreviewUrl
+  getPreviewUrl,
+  getMedia
 };

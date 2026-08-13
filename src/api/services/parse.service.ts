@@ -1,11 +1,92 @@
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import pLimit from 'p-limit';
-import { marked } from 'marked';
+import { JSDOM } from 'jsdom';
+import { Marked } from 'marked';
 
+import type { MediaSink } from '~/api/services/media.service';
 import { runOcrOnPdf, runOcrOnPdfPages } from '~/api/services/ocr.service';
+import { htmlToText } from '~/api/utils/html-to-text.util';
+import { escapeHtml, sanitizeSourceHtml } from '~/api/utils/source-html.util';
 import { env } from '~/config/enviroment';
 import logger from '~/config/logger';
+
+// Per-source hooks that don't belong to a buffer. Parsing without a context
+// still works; the images are simply dropped.
+export type ParseContext = {
+  sourceId?: string;
+  saveMedia?: MediaSink;
+};
+
+// A dedicated instance, not the shared `marked` singleton, so the renderer
+// override below can't leak into other callers.
+const markdown = new Marked({
+  gfm: true,
+  breaks: false
+});
+
+// Fenced languages we can't draw; they are labelled and shown as code.
+const DIAGRAM_LANGUAGES = new Set([
+  'mermaid',
+  'plantuml',
+  'puml',
+  'graphviz',
+  'dot',
+  'vega',
+  'vega-lite',
+  'flow',
+  'sequence',
+  'gantt'
+]);
+
+markdown.use({
+  renderer: {
+    // Tag each block with its language so the reader can label it.
+    code({ text, lang }) {
+      const language = (lang || '').trim().split(/\s+/)[0].toLowerCase();
+      const body = `<pre><code${
+        language ? ` class="language-${escapeHtml(language)}"` : ''
+      }>${escapeHtml(text)}</code></pre>`;
+
+      if (!language) {
+        return body;
+      }
+
+      const kind = DIAGRAM_LANGUAGES.has(language) ? 'diagram' : 'code';
+      return `<figure class="source-code-block" data-lang="${escapeHtml(
+        language
+      )}"${kind === 'diagram' ? ` data-diagram="${escapeHtml(language)}"` : ''}>${body}<figcaption>${escapeHtml(
+        language
+      )}${kind === 'diagram' ? ' diagram' : ''}</figcaption></figure>`;
+    }
+  }
+});
+
+export const markdownToHtml = async (source: string): Promise<string> =>
+  (await markdown.parse(source)) as string;
+
+// Left in place, Markdown renders front matter as a stray rule plus
+// `key: value` lines. Only flat scalars are read.
+const FRONT_MATTER = /^﻿?---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+
+export const splitFrontMatter = (
+  text: string
+): { body: string; meta: Record<string, string> } => {
+  const match = text.match(FRONT_MATTER);
+  if (!match) {
+    return { body: text, meta: {} };
+  }
+
+  const meta: Record<string, string> = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const pair = line.match(/^([A-Za-z][\w.-]*)\s*:\s*(.*)$/);
+    if (pair) {
+      meta[pair[1].toLowerCase()] = pair[2].trim().replace(/^["']|["']$/g, '');
+    }
+  }
+
+  return { body: text.slice(match[0].length), meta };
+};
 
 // Rough tag stripper for XML-based containers (PPTX slides, XLSX strings,
 // EPUB documents) — good enough to pull readable text without a full HTML parser.
@@ -392,35 +473,79 @@ const extractFromPdf = async (
   return { text: text.trim(), tablePages };
 };
 
-// DOCX: mammoth converts the document to plain text and HTML.
+// Styles mammoth's default map discards, which would otherwise arrive as
+// ordinary paragraphs.
+const DOCX_STYLE_MAP = [
+  "p[style-name='Title'] => h1:fresh",
+  "p[style-name='Subtitle'] => h2:fresh",
+  "p[style-name='Quote'] => blockquote:fresh",
+  "p[style-name='Intense Quote'] => blockquote:fresh",
+  "p[style-name='Caption'] => figcaption:fresh",
+  "p[style-name='Heading 1'] => h1:fresh",
+  "p[style-name='Heading 2'] => h2:fresh",
+  "p[style-name='Heading 3'] => h3:fresh",
+  "p[style-name='Heading 4'] => h4:fresh",
+  "r[style-name='Code'] => code",
+  "r[style-name='Verbatim Char'] => code"
+];
+
+// DOCX: mammoth to HTML, with embedded images routed to the media sink.
+// Without a sink they are dropped rather than inlined as base64.
 const extractFromDocx = async (
-  buffer: Buffer
-): Promise<{ content: string; html: string }> => {
-  const rawResult = await mammoth.extractRawText({ buffer });
-  const htmlResult = await mammoth.convertToHtml({ buffer });
-  return {
-    content: rawResult.value.trim(),
-    html: htmlResult.value.trim()
-  };
+  buffer: Buffer,
+  context: ParseContext
+): Promise<{ html: string }> => {
+  const saveMedia = context.saveMedia;
+
+  const result = await mammoth.convertToHtml(
+    { buffer },
+    {
+      styleMap: DOCX_STYLE_MAP,
+      convertImage: mammoth.images.imgElement(async (image) => {
+        if (!saveMedia) {
+          return { src: '' };
+        }
+        try {
+          const data = await image.readAsBuffer();
+          const url = await saveMedia(data, image.contentType);
+          return { src: url ?? '' };
+        } catch (error) {
+          logger.warn('[ParseService] Failed to extract an image from DOCX', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          return { src: '' };
+        }
+      })
+    }
+  );
+
+  // Unmapped styles and unsupported constructs land here.
+  const warnings = result.messages.filter(
+    (message) => message.type !== 'error'
+  );
+  if (warnings.length > 0) {
+    logger.debug('[ParseService] DOCX conversion notes', {
+      count: warnings.length,
+      sample: warnings.slice(0, 5).map((message) => message.message)
+    });
+  }
+
+  return { html: result.value.trim() };
 };
 
-// Markdown: parsed to an mdast tree (remark supports GitHub-flavored markdown) for raw text,
-// and formatted to clean HTML.
+// Markdown: the raw source doubles as the text projection, since it already
+// carries `#` headings, pipe tables and list markers.
 const extractFromMarkdown = async (
   buffer: Buffer
-): Promise<{ content: string; html: string }> => {
-  const { unified } = await import('unified');
-  const remarkParse = (await import('remark-parse')).default;
-  const remarkGfm = (await import('remark-gfm')).default;
-  const { toString } = await import('mdast-util-to-string');
+): Promise<{ content: string; html: string; meta: Record<string, string> }> => {
+  const raw = buffer.toString('utf8');
+  const { body, meta } = splitFrontMatter(raw);
 
-  const text = buffer.toString('utf8');
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(text);
-  const content = toString(tree as never).trim();
-
-  const html = (await marked.parse(text)) as string;
-
-  return { content, html };
+  return {
+    content: body.trim(),
+    html: await markdownToHtml(body),
+    meta
+  };
 };
 
 // Plain text (txt/csv): no parsing needed, just decode UTF-8.
@@ -466,39 +591,190 @@ const extractFromXlsx = async (buffer: Buffer): Promise<string> => {
   return cells.join('\n').trim();
 };
 
-// Unzips the EPUB archive, filters for XHTML/HTML files, and extracts both raw, tag-stripped
-// content and the raw HTML body content. Uses pLimit to process files with a concurrency limit.
+// Zip entries are addressed by full path, so an href like
+// `../images/cover.jpg` has to be flattened against its document's directory.
+const resolveZipPath = (fromPath: string, href: string): string => {
+  const base = fromPath.split('/').slice(0, -1);
+  const segments = decodeURIComponent(href.split('#')[0]).split('/');
+  const resolved: string[] = [...base];
+
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+
+  return resolved.join('/');
+};
+
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml'
+};
+
+// Only the OPF package file knows the reading order (its <spine>). The zip's
+// own entry order is arbitrary and can yield chapter 7 before chapter 1.
 const extractFromEpub = async (
-  buffer: Buffer
-): Promise<{ content: string; html: string }> => {
+  buffer: Buffer,
+  context: ParseContext
+): Promise<{ html: string; title?: string; author?: string }> => {
   const zip = await JSZip.loadAsync(buffer);
-  const entries = Object.values(zip.files).filter(
-    (file) => !file.dir && /\.(x?html|htm)$/i.test(file.name)
-  );
+
+  // META-INF/container.xml → the OPF package document.
+  const containerXml = await zip
+    .file('META-INF/container.xml')
+    ?.async('string');
+  const opfPath =
+    containerXml?.match(/full-path="([^"]+)"/i)?.[1] ||
+    Object.keys(zip.files).find((name) => name.toLowerCase().endsWith('.opf'));
+
+  const opfXml = opfPath ? await zip.file(opfPath)?.async('string') : undefined;
+
+  // Manifest: id → href/media-type. Spine: the ids in reading order.
+  const manifest = new Map<string, { href: string; mediaType: string }>();
+  const spine: string[] = [];
+  let title: string | undefined;
+  let author: string | undefined;
+
+  if (opfXml) {
+    for (const item of opfXml.match(/<item\s[^>]*\/?>/gi) || []) {
+      const id = item.match(/\sid="([^"]+)"/i)?.[1];
+      const href = item.match(/\shref="([^"]+)"/i)?.[1];
+      const mediaType = item.match(/\smedia-type="([^"]+)"/i)?.[1] || '';
+      if (id && href) {
+        manifest.set(id, { href, mediaType });
+      }
+    }
+
+    for (const itemref of opfXml.match(/<itemref\s[^>]*\/?>/gi) || []) {
+      const idref = itemref.match(/\sidref="([^"]+)"/i)?.[1];
+      if (idref) {
+        spine.push(idref);
+      }
+    }
+
+    title = opfXml
+      .match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i)?.[1]
+      ?.replace(/<[^>]+>/g, '')
+      .trim();
+    author = opfXml
+      .match(/<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/i)?.[1]
+      ?.replace(/<[^>]+>/g, '')
+      .trim();
+  }
+
+  // Falls back to the archive listing for an EPUB with no usable spine.
+  const documentPaths = spine
+    .map((id) => manifest.get(id))
+    .filter(
+      (item): item is { href: string; mediaType: string } =>
+        !!item && /x?html/i.test(item.mediaType || item.href)
+    )
+    .map((item) => resolveZipPath(opfPath || '', item.href));
+
+  const paths =
+    documentPaths.length > 0
+      ? documentPaths
+      : Object.keys(zip.files)
+          .filter(
+            (name) => !zip.files[name].dir && /\.(x?html|htm)$/i.test(name)
+          )
+          .sort();
+
+  // Cached: EPUBs reuse the same asset across many documents.
+  const mediaUrlByPath = new Map<string, string | null>();
+  const storeImage = async (path: string): Promise<string | null> => {
+    if (mediaUrlByPath.has(path)) {
+      return mediaUrlByPath.get(path) ?? null;
+    }
+
+    let url: string | null = null;
+    const file = zip.file(path);
+    if (file && context.saveMedia) {
+      try {
+        const data = await file.async('nodebuffer');
+        const extension = path.split('.').pop()?.toLowerCase() || '';
+        url = await context.saveMedia(
+          data,
+          IMAGE_MIME_BY_EXTENSION[extension] || 'application/octet-stream'
+        );
+      } catch (error) {
+        logger.warn('[ParseService] Failed to extract an image from EPUB', {
+          path,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    mediaUrlByPath.set(path, url);
+    return url;
+  };
 
   const limit = pLimit(4);
-  const rawParts = await Promise.all(
-    entries.map((entry) =>
-      limit(async () => {
-        const xml = await entry.async('string');
-        return stripTags(xml);
-      })
-    )
-  );
+  const chapters = await Promise.all(
+    paths.map((path) =>
+      limit(async (): Promise<string> => {
+        const file = zip.file(path);
+        if (!file) {
+          return '';
+        }
 
-  const htmlParts = await Promise.all(
-    entries.map((entry) =>
-      limit(async () => {
-        const xml = await entry.async('string');
-        const bodyMatch = xml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-        return bodyMatch ? bodyMatch[1] : xml;
+        const xhtml = await file.async('string');
+        const body = xhtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1];
+        if (!body || !body.trim()) {
+          return '';
+        }
+
+        const dom = new JSDOM(`<body>${body}</body>`);
+        const { document } = dom.window;
+
+        // Rewrite every in-archive image reference to its stored URL. Both the
+        // HTML <img> and the SVG <image xlink:href> wrapper EPUBs use for cover
+        // pages are handled.
+        const images = Array.from(document.querySelectorAll('img, image'));
+        for (const image of images) {
+          const attribute = image.hasAttribute('src')
+            ? 'src'
+            : image.hasAttribute('xlink:href')
+              ? 'xlink:href'
+              : 'href';
+          const href = image.getAttribute(attribute);
+          if (!href || /^(https?:|data:)/i.test(href)) {
+            continue;
+          }
+
+          const url = await storeImage(resolveZipPath(path, href));
+          if (!url) {
+            image.remove();
+            continue;
+          }
+
+          const img = document.createElement('img');
+          img.setAttribute('src', url);
+          const alt = image.getAttribute('alt');
+          if (alt) {
+            img.setAttribute('alt', alt);
+          }
+          image.replaceWith(img);
+        }
+
+        return `<section class="epub-chapter">${document.body.innerHTML}</section>`;
       })
     )
   );
 
   return {
-    content: rawParts.filter(Boolean).join('\n').trim(),
-    html: htmlParts.filter(Boolean).join('\n').trim()
+    html: chapters.filter(Boolean).join('\n'),
+    title,
+    author
   };
 };
 
@@ -506,42 +782,156 @@ const extractFromEpub = async (
 // Format-Specific Unified Parsers
 // ==========================================
 
-// Injects Tailwind styles and inline CSS rules into tables and code blocks to render beautifully
-const injectStyles = (html: string): string => {
-  let styled = html
-    .replace(
-      /<table>/g,
-      '<table class="w-full border-collapse border border-muted/50 my-4" style="width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px;">'
-    )
-    .replace(/<thead>/g, '<thead class="bg-muted/10">')
-    .replace(/<tr>/g, '<tr class="even:bg-muted/5">')
-    .replace(
-      /<th>/g,
-      '<th class="border border-muted/30 px-4 py-2 text-left font-bold text-sm text-foreground" style="border: 1px solid rgba(128,128,128,0.3); padding: 8px 16px; text-align: left; font-weight: bold; background-color: rgba(128,128,128,0.1);">'
-    )
-    .replace(
-      /<td>/g,
-      '<td class="border border-muted/30 px-4 py-2 text-sm text-foreground/80" style="border: 1px solid rgba(128,128,128,0.2); padding: 8px 16px;">'
-    );
+// Tailwind classes cover the app's theme; the duplicated inline styles survive
+// the `prose` reset and contexts that don't load the stylesheet.
+const ELEMENT_STYLES: Record<string, { className: string; style?: string }> = {
+  table: {
+    className: 'w-full border-collapse border border-muted/50 my-4',
+    style:
+      'width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px;'
+  },
+  thead: { className: 'bg-muted/10' },
+  tr: { className: 'even:bg-muted/5' },
+  th: {
+    className:
+      'border border-muted/30 px-4 py-2 text-left font-bold text-sm text-foreground',
+    style:
+      'border: 1px solid rgba(128,128,128,0.3); padding: 8px 16px; text-align: left; font-weight: bold; background-color: rgba(128,128,128,0.1);'
+  },
+  td: {
+    className: 'border border-muted/30 px-4 py-2 text-sm text-foreground/80',
+    style: 'border: 1px solid rgba(128,128,128,0.2); padding: 8px 16px;'
+  },
+  pre: {
+    className:
+      'bg-muted/10 border border-muted/30 rounded-lg p-4 my-4 overflow-x-auto',
+    style:
+      'background-color: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); padding: 16px; border-radius: 8px; margin: 16px 0; overflow-x: auto; font-family: monospace;'
+  },
+  blockquote: {
+    className: 'border-l-4 border-muted/50 pl-4 italic my-4',
+    style:
+      'border-left: 4px solid rgba(128,128,128,0.35); padding-left: 16px; font-style: italic; margin: 16px 0;'
+  },
+  img: {
+    className: 'max-w-full h-auto rounded-md my-4',
+    style: 'max-width: 100%; height: auto; border-radius: 6px; margin: 16px 0;'
+  },
+  figure: { className: 'my-4', style: 'margin: 16px 0;' },
+  figcaption: {
+    className: 'text-xs text-muted-foreground mt-1',
+    style: 'font-size: 12px; opacity: 0.7; margin-top: 4px;'
+  }
+};
 
-  // Style block code (<pre><code class="xyz">)
-  styled = styled.replace(
-    /<pre><code class="([^"]*)">/g,
-    '<pre class="bg-muted/10 border border-muted/30 rounded-lg p-4 my-4 overflow-x-auto" style="background-color: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); padding: 16px; border-radius: 8px; margin: 16px 0; overflow-x: auto; font-family: monospace;"><code class="font-mono text-sm $1" style="font-family: monospace;">'
+const decorate = (element: Element, tag: string): void => {
+  const decoration = ELEMENT_STYLES[tag];
+  if (!decoration) {
+    return;
+  }
+  const existing = element.getAttribute('class');
+  element.setAttribute(
+    'class',
+    existing ? `${existing} ${decoration.className}` : decoration.className
   );
-  // Style block code (<pre><code> with no class)
-  styled = styled.replace(
-    /<pre><code>/g,
-    '<pre class="bg-muted/10 border border-muted/30 rounded-lg p-4 my-4 overflow-x-auto" style="background-color: rgba(128,128,128,0.05); border: 1px solid rgba(128,128,128,0.2); padding: 16px; border-radius: 8px; margin: 16px 0; overflow-x: auto; font-family: monospace;"><code class="font-mono text-sm" style="font-family: monospace;">'
-  );
+  if (decoration.style) {
+    element.setAttribute('style', decoration.style);
+  }
+};
 
-  // Style inline code (<code>)
-  styled = styled.replace(
-    /<code>/g,
-    '<code class="bg-muted/10 rounded px-1.5 py-0.5 font-mono text-sm" style="background-color: rgba(128,128,128,0.08); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;">'
-  );
+// DOCX, EPUB and fetched pages emit a flat run of <tr><td> with no <thead>, so
+// the first row reads as data. Promote it when every cell has text.
+const promoteTableHeader = (table: Element, document: Document): void => {
+  if (table.querySelector('thead, th')) {
+    return;
+  }
 
-  return styled;
+  const firstRow = table.querySelector('tr');
+  const cells = firstRow
+    ? Array.from(firstRow.querySelectorAll(':scope > td'))
+    : [];
+  if (!firstRow || cells.length < 2) {
+    return;
+  }
+  if (cells.some((cell) => !(cell.textContent || '').trim())) {
+    return;
+  }
+
+  for (const cell of cells) {
+    const header = document.createElement('th');
+    header.innerHTML = cell.innerHTML;
+    for (const attribute of Array.from(cell.attributes)) {
+      header.setAttribute(attribute.name, attribute.value);
+    }
+    cell.replaceWith(header);
+  }
+
+  // The row sits inside <tbody>, but <thead> must be its sibling.
+  const head = document.createElement('thead');
+  firstRow.remove();
+  head.appendChild(firstRow);
+  table.insertBefore(head, table.firstChild);
+};
+
+// Word writes `<td><p>text</p></td>`, whose paragraph margins pad the cell out
+// of shape.
+const unwrapCellParagraphs = (document: Document): void => {
+  for (const cell of Array.from(document.querySelectorAll('th, td'))) {
+    const children = Array.from(cell.children);
+    if (
+      children.length === 1 &&
+      children[0].tagName === 'P' &&
+      !(cell.textContent || '').trim().includes('\n')
+    ) {
+      cell.innerHTML = children[0].innerHTML;
+    }
+  }
+};
+
+// The single choke point for reader HTML. Sanitizing first matters: the classes
+// and styles added afterwards are ours and would otherwise be stripped.
+const finalizeHtml = (html: string): string => {
+  if (!html.trim()) {
+    return '';
+  }
+
+  const dom = new JSDOM(`<body>${sanitizeSourceHtml(html)}</body>`);
+  const { document } = dom.window;
+
+  for (const table of Array.from(document.querySelectorAll('table'))) {
+    promoteTableHeader(table, document);
+  }
+  unwrapCellParagraphs(document);
+
+  for (const element of Array.from(document.body.querySelectorAll('*'))) {
+    const tag = element.tagName.toLowerCase();
+
+    if (tag === 'img') {
+      // Media the sink declined to store would render as a broken image.
+      if (!element.getAttribute('src')) {
+        element.remove();
+        continue;
+      }
+      element.setAttribute('loading', 'lazy');
+    }
+
+    if (tag === 'code' && element.parentElement?.tagName !== 'PRE') {
+      // Inline code only — code inside <pre> inherits the block styling.
+      element.setAttribute(
+        'class',
+        'bg-muted/10 rounded px-1.5 py-0.5 font-mono text-sm'
+      );
+      element.setAttribute(
+        'style',
+        'background-color: rgba(128,128,128,0.08); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;'
+      );
+      continue;
+    }
+
+    decorate(element, tag);
+  }
+
+  return document.body.innerHTML;
 };
 
 // Renders an array of string cells as a Markdown table row
@@ -672,14 +1062,15 @@ const parsePdf = async (buffer: Buffer) => {
       // Convert tab-separated layouts to styled tables if OCR is active or tables/headings are detected
       if (isOcr || hasOcrText || hasTables || hasHeadings) {
         const markdownContent = convertTabsToMarkdownTables(pageText);
-        const parsedHtml = await marked.parse(markdownContent);
-        const styledHtml = injectStyles(parsedHtml);
+        const styledHtml = finalizeHtml(await markdownToHtml(markdownContent));
         return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div>${styledHtml}</div>`;
       } else {
         const paragraphsHtml = pageText
           .split('\n\n')
           .filter((para) => para.trim().length > 0)
-          .map((para) => `<p>${para.replace(/\n/g, ' ').trim()}</p>`)
+          .map(
+            (para) => `<p>${escapeHtml(para.replace(/\n/g, ' ').trim())}</p>`
+          )
           .join('');
         return `<div class="pdf-page mb-6 border-b border-dashed pb-4 border-muted/50"><div class="text-xs font-bold text-muted-foreground mb-2">Page ${pageNum}</div>${paragraphsHtml}</div>`;
       }
@@ -689,14 +1080,12 @@ const parsePdf = async (buffer: Buffer) => {
     const hasHeadings = /(?:^|\n)#{2,3} /.test(p);
     if (isOcr || hasTables || hasHeadings) {
       const markdownContent = convertTabsToMarkdownTables(p);
-      const parsedHtml = await marked.parse(markdownContent);
-      const styledHtml = injectStyles(parsedHtml);
-      return styledHtml;
+      return finalizeHtml(await markdownToHtml(markdownContent));
     } else {
       return p
         .split('\n\n')
         .filter((para) => para.trim().length > 0)
-        .map((para) => `<p>${para.replace(/\n/g, ' ').trim()}</p>`)
+        .map((para) => `<p>${escapeHtml(para.replace(/\n/g, ' ').trim())}</p>`)
         .join('');
     }
   });
@@ -721,6 +1110,8 @@ const parsePdf = async (buffer: Buffer) => {
 
   return {
     content,
+    // Badged by the reader as "PDF · 14 pages".
+    pageCount: numPages,
     structuredContent: {
       type: 'document',
       html: pagesHtml
@@ -728,36 +1119,51 @@ const parsePdf = async (buffer: Buffer) => {
   };
 };
 
-// Parses a DOCX file into plain text (for embeddings) and document-type HTML structure.
-const parseDocx = async (buffer: Buffer) => {
-  const res = await extractFromDocx(buffer);
+// Document HTML plus the text projection of that same HTML, so table cells stay
+// in their rows for the embeddings.
+const parseDocx = async (buffer: Buffer, context: ParseContext) => {
+  const res = await extractFromDocx(buffer, context);
+  const html = finalizeHtml(res.html);
   return {
-    content: res.content,
+    content: htmlToText(html),
     structuredContent: {
       type: 'document',
-      html: injectStyles(res.html)
+      html
     }
   };
 };
 
-// Parses a Markdown file into plain text (AST-based) and HTML (using the marked renderer).
+// Parses a Markdown file. The markdown itself is the text projection; the HTML
+// is the rendered view.
 const parseMarkdownFile = async (buffer: Buffer) => {
   const res = await extractFromMarkdown(buffer);
   return {
     content: res.content,
+    title: res.meta.title,
+    author: res.meta.author,
     structuredContent: {
       type: 'document',
-      html: injectStyles(res.html)
+      html: finalizeHtml(res.html)
     }
   };
 };
 
-// Parses a PPTX file, providing a tag-stripped text fallback along with structured slide JSON.
+// Structured slide JSON plus a markdown projection, so passages keep their
+// slide heading.
 const parsePptxFile = async (buffer: Buffer) => {
-  const content = await extractFromPptx(buffer);
   const slides = await parsePptxSlides(buffer);
+
+  const content = slides
+    .map((slide) =>
+      [
+        `## Slide ${slide.slideNumber}: ${slide.title}`,
+        ...slide.bullets.map((bullet) => `- ${bullet}`)
+      ].join('\n')
+    )
+    .join('\n\n');
+
   return {
-    content,
+    content: content.trim() || (await extractFromPptx(buffer)),
     structuredContent: {
       type: 'slides',
       slides
@@ -765,12 +1171,23 @@ const parsePptxFile = async (buffer: Buffer) => {
   };
 };
 
-// Parses an XLSX file, returning tag-stripped text fallback and structured sheets JSON.
+// The text projection for XLSX and CSV: a cell value only means something next
+// to its column header, which a flat dump of shared strings loses.
+const sheetsToMarkdown = (
+  sheets: { name: string; headers: string[]; rows: string[][] }[]
+): string =>
+  sheets
+    .map((sheet) =>
+      `## ${sheet.name}\n\n${renderMarkdownTable([sheet.headers, ...sheet.rows])}`.trim()
+    )
+    .join('\n\n')
+    .trim();
+
+// Parses an XLSX file into structured sheets JSON plus a markdown projection.
 const parseXlsxFile = async (buffer: Buffer) => {
-  const content = await extractFromXlsx(buffer);
   const sheets = await parseXlsxSheets(buffer);
   return {
-    content,
+    content: sheetsToMarkdown(sheets) || (await extractFromXlsx(buffer)),
     structuredContent: {
       type: 'sheets',
       sheets
@@ -778,14 +1195,18 @@ const parseXlsxFile = async (buffer: Buffer) => {
   };
 };
 
-// Parses an EPUB file into concatenated plain text and document HTML.
-const parseEpubFile = async (buffer: Buffer) => {
-  const res = await extractFromEpub(buffer);
+// Parses an EPUB file into reading-order chapters and document HTML.
+const parseEpubFile = async (buffer: Buffer, context: ParseContext) => {
+  const res = await extractFromEpub(buffer, context);
+  const html = finalizeHtml(res.html);
   return {
-    content: res.content,
+    content: htmlToText(html),
+    // Applied by the worker only if the uploader left the defaults.
+    title: res.title,
+    author: res.author,
     structuredContent: {
       type: 'document',
-      html: injectStyles(res.html)
+      html
     }
   };
 };
@@ -795,53 +1216,110 @@ const parseTxt = async (buffer: Buffer) => {
   const content = extractFromPlainText(buffer);
   const textHtml = content
     .split(/\n\s*\n/)
-    .map((p) => `<p>${p.trim().replace(/\n/g, '<br/>')}</p>`)
+    .map((p) => `<p>${escapeHtml(p.trim()).replace(/\n/g, '<br/>')}</p>`)
     .join('');
   return {
     content,
     structuredContent: {
       type: 'document',
-      html: injectStyles(textHtml)
+      html: finalizeHtml(textHtml)
     }
   };
 };
 
-// Parses a CSV file, splitting rows and columns to return sheet-like structured JSON data.
-const parseCsvFile = async (buffer: Buffer) => {
-  const content = extractFromPlainText(buffer);
-  const rows = content.split('\n').map((line) => line.split(','));
-  let headers: string[] = [];
-  let finalRows: string[][] = [];
-  if (rows.length > 0) {
-    headers = rows[0];
-    finalRows = rows.slice(1);
+// RFC 4180 quoting: a quoted field can contain commas, newlines and doubled
+// quotes. Splitting on every comma tears `"Smith, John"` into two columns.
+const parseCsv = (text: string): string[][] => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (quoted) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = true;
+    } else if (char === ',') {
+      row.push(field);
+      field = '';
+    } else if (char === '\n' || char === '\r') {
+      // Close on CR, LF or CRLF, ignoring a trailing newline's empty row.
+      if (char === '\r' && text[i + 1] === '\n') {
+        i++;
+      }
+      row.push(field);
+      field = '';
+      if (row.some((value) => value.trim() !== '')) {
+        rows.push(row);
+      }
+      row = [];
+    } else {
+      field += char;
+    }
   }
+
+  row.push(field);
+  if (row.some((value) => value.trim() !== '')) {
+    rows.push(row);
+  }
+
+  return rows.map((cells) => cells.map((cell) => cell.trim()));
+};
+
+// Parses a CSV file into sheet-like structured JSON data.
+const parseCsvFile = async (buffer: Buffer) => {
+  const rows = parseCsv(extractFromPlainText(buffer));
+  const headers = rows[0] ?? [];
+  const dataRows = rows.slice(1);
+
+  const sheets = [{ name: 'CSV Data', headers, rows: dataRows }];
+
   return {
-    content,
+    content: sheetsToMarkdown(sheets),
     structuredContent: {
       type: 'sheets',
-      sheets: [
-        {
-          name: 'CSV Data',
-          headers,
-          rows: finalRows
-        }
-      ]
+      sheets
     }
   };
+};
+
+export type ParseResult = {
+  content: string;
+  structuredContent: any;
+  // Carried by the file itself; only fills fields the uploader left blank.
+  title?: string;
+  author?: string;
+  // Page count, where the format has pages at all (PDF today).
+  pageCount?: number;
 };
 
 // Main unified parser function. Routes the binary buffer to the appropriate format parser
 // based on the file format string, and returns content (for embeddings) and structuredContent.
 const parse = async (
   format: string,
-  buffer: Buffer
-): Promise<{ content: string; structuredContent: any }> => {
+  buffer: Buffer,
+  context: ParseContext = {}
+): Promise<ParseResult> => {
   switch (format) {
     case 'pdf':
       return parsePdf(buffer);
     case 'docx':
-      return parseDocx(buffer);
+      return parseDocx(buffer, context);
     case 'md':
       return parseMarkdownFile(buffer);
     case 'pptx':
@@ -849,7 +1327,7 @@ const parse = async (
     case 'xlsx':
       return parseXlsxFile(buffer);
     case 'epub':
-      return parseEpubFile(buffer);
+      return parseEpubFile(buffer, context);
     case 'txt':
       return parseTxt(buffer);
     case 'csv':
@@ -859,4 +1337,4 @@ const parse = async (
   }
 };
 
-export default { parse, injectStyles };
+export default { parse, finalizeHtml, markdownToHtml };

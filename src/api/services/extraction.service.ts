@@ -4,10 +4,12 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 import { JSDOM } from 'jsdom';
-import { marked } from 'marked';
 
+import { createMediaSink } from '~/api/services/media.service';
 import { getFileExtension } from '~/api/utils/file.util';
+import { htmlToText } from '~/api/utils/html-to-text.util';
 import { downloadObject } from '~/api/utils/minio.util';
+import { escapeHtml } from '~/api/utils/source-html.util';
 import logger from '~/config/logger';
 import type { SourceType } from '~/generated/prisma/enums';
 import ParseService from '~/api/services/parse.service';
@@ -15,6 +17,7 @@ import ParseService from '~/api/services/parse.service';
 // ExtractInput is what the worker feeds in; sourceUrl is the MinIO object key
 // for File sources or the article URL for Web sources.
 export type ExtractInput = {
+  sourceId: string;
   sourceType: SourceType;
   sourceUrl?: string | null;
   content?: string;
@@ -300,6 +303,8 @@ type Hop = {
   response: http.IncomingMessage;
   cleanup: () => void;
   signal: AbortSignal;
+  // The last hop after redirects, which relative links resolve against.
+  finalUrl: string;
 };
 
 // Perform a single HTTP(S) hop pinned to a pre-validated IP. The `lookup`
@@ -367,7 +372,7 @@ const fetchHop = async (url: string): Promise<Hop> => {
     );
     // Success: keep the deadline + abort listener active so body consumption is
     // still bounded. The caller invokes `cleanup()` after the body is read.
-    return { response, cleanup, signal: controller.signal };
+    return { response, cleanup, signal: controller.signal, finalUrl: url };
   } catch (error) {
     cleanup(); // hop failed (including timeout) — the deadline is over
     if (controller.signal.aborted) {
@@ -414,6 +419,69 @@ const fetchApproved = async (urlString: string): Promise<Hop> => {
   }
 
   throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
+};
+
+// Relative URLs stop resolving once the markup is stored on its own, so they
+// are rewritten against the URL the page came from.
+const absolutizeUrls = (html: string, baseUrl: string): string => {
+  const dom = new JSDOM(`<body>${html}</body>`);
+  const { document } = dom.window;
+
+  for (const [selector, attribute] of [
+    ['img[src]', 'src'],
+    ['a[href]', 'href']
+  ] as const) {
+    for (const element of Array.from(document.querySelectorAll(selector))) {
+      const value = element.getAttribute(attribute);
+      if (!value || value.startsWith('#') || /^data:/i.test(value)) {
+        continue;
+      }
+      try {
+        element.setAttribute(attribute, new URL(value, baseUrl).toString());
+      } catch {
+        element.removeAttribute(attribute);
+      }
+    }
+  }
+
+  return document.body.innerHTML;
+};
+
+// Peel Jina Reader's `Key: value` header block off the article. It ends at
+// `Markdown Content:`; without that marker the scan stops at the first line
+// that isn't a key/value pair, so no prose is eaten.
+const splitJinaPreamble = (
+  markdown: string
+): { meta: Record<string, string>; body: string } => {
+  const lines = markdown.split(/\r?\n/);
+  const meta: Record<string, string> = {};
+  let index = 0;
+  let sawMarker = false;
+
+  for (; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) {
+      continue;
+    }
+    if (/^markdown content:$/i.test(line)) {
+      sawMarker = true;
+      index++;
+      break;
+    }
+
+    const pair = line.match(/^([A-Za-z][A-Za-z ]{1,24}):\s*(.*)$/);
+    if (!pair) {
+      break;
+    }
+    meta[pair[1].trim().toLowerCase()] = pair[2].trim();
+  }
+
+  // No recognizable header at all — treat the whole payload as the article.
+  if (!sawMarker && Object.keys(meta).length === 0) {
+    return { meta, body: markdown };
+  }
+
+  return { meta, body: lines.slice(index).join('\n') };
 };
 
 const extractFromWeb = async (
@@ -478,26 +546,29 @@ const extractFromWeb = async (
         ).toString('utf8');
 
         if (markdown.trim()) {
-          // Parse title from Jina header metadata
-          const titleMatch = markdown.match(/^Title:\s*(.*)/i);
-          if (titleMatch) {
-            title = titleMatch[1].trim();
+          // Jina prefixes the article with a `Title:/URL Source:/…` block.
+          // Left in place it lands at the top of the reader and in the
+          // embeddings.
+          const { meta, body } = splitJinaPreamble(markdown);
+          title = meta.title || title;
+          author = meta.author || meta['published by'] || author;
+
+          if (body.trim()) {
+            const compiledHtml = await ParseService.markdownToHtml(body);
+            contentHtml = ParseService.finalizeHtml(compiledHtml);
+            // Same HTML, so tables survive as rows.
+            contentText = htmlToText(contentHtml);
+
+            fetchedViaJina = true;
+            logger.info(
+              '[Extractor] Successfully fetched and parsed markdown from Jina Reader',
+              { charCount: contentText.length }
+            );
+          } else {
+            logger.warn(
+              '[Extractor] Jina Reader returned metadata but no article body'
+            );
           }
-
-          // Compile Jina's high-quality Markdown to HTML
-          const compiledHtml = await marked.parse(markdown);
-
-          // Use JSDOM to extract clean, un-marked plaintext for search indexing
-          const jinaDom = new JSDOM(compiledHtml);
-          contentText = (
-            jinaDom.window.document.body?.textContent || ''
-          ).trim();
-          contentHtml = ParseService.injectStyles(compiledHtml);
-
-          fetchedViaJina = true;
-          logger.info(
-            '[Extractor] Successfully fetched and parsed markdown from Jina Reader'
-          );
         }
       } else {
         logger.warn('[Extractor] Jina Reader returned non-200 status', {
@@ -583,7 +654,11 @@ const extractFromWeb = async (
     }
 
     if (contentHtml) {
-      contentHtml = ParseService.injectStyles(contentHtml);
+      // Resolved against the article URL before the HTML is stored.
+      contentHtml = ParseService.finalizeHtml(
+        absolutizeUrls(contentHtml, hop.finalUrl ?? url)
+      );
+      contentText = htmlToText(contentHtml) || contentText;
     }
   }
 
@@ -619,7 +694,7 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
     const cleanContent = sanitizeText(rawContent);
     const paragraphsHtml = cleanContent
       .split(/\n\s*\n/)
-      .map((p) => `<p>${p.replace(/\n/g, '<br/>')}</p>`)
+      .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
       .join('');
 
     logger.debug('[Extractor] Manual text parsed successfully', {
@@ -657,7 +732,9 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
       content: cleanContent,
       structuredContent: {
         type: 'document',
-        html: html || `<p>${cleanContent.replace(/\n/g, '<br/>')}</p>`
+        // Page text with no usable markup; escaped since it is raw content.
+        html:
+          html || `<p>${escapeHtml(cleanContent).replace(/\n/g, '<br/>')}</p>`
       },
       title,
       author,
@@ -684,7 +761,12 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
     fileType: input.fileType
   });
 
-  const parseResult = await ParseService.parse(format, buffer);
+  // Embedded images go to object storage under this source's prefix; the
+  // stored HTML references them by URL.
+  const parseResult = await ParseService.parse(format, buffer, {
+    sourceId: input.sourceId,
+    saveMedia: createMediaSink(input.sourceId)
+  });
 
   if (!parseResult.content) {
     throw new Error('No extractable text found in the file.');
@@ -694,6 +776,10 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
   return {
     content: cleanContent,
     structuredContent: parseResult.structuredContent,
+    // Only when the file carries its own metadata (EPUB package, front matter).
+    title: parseResult.title,
+    author: parseResult.author,
+    pageCount: parseResult.pageCount,
     characterCount: cleanContent.length
   };
 };

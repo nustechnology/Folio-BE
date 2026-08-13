@@ -129,6 +129,27 @@ const status = async (req: Request, res: Response) => {
   await SseService.streamAllStatus(req.userId!, res);
 };
 
+// Serves an image extracted from a parsed document. Unauthenticated by
+// necessity — a browser cannot put a bearer token on an <img> — which is why
+// the name is a content hash under a random source UUID. Same exposure as the
+// existing object-storage preview URL.
+const getMedia = async (req: Request, res: Response) => {
+  const { sourceId, fileName } = req.params;
+  const media = await SourceService.getMedia(sourceId, fileName);
+
+  res.setHeader('Content-Type', media.contentType);
+  if (media.contentLength !== undefined) {
+    res.setHeader('Content-Length', String(media.contentLength));
+  }
+  // Content-addressed names never change bytes, so cache hard.
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  media.stream.on('error', () => res.destroy());
+  media.stream.pipe(res);
+};
+
 export default {
   create,
   list,
@@ -137,5 +158,6 @@ export default {
   remove,
   retry,
   getPreviewUrl,
+  getMedia,
   status
 };

@@ -4,8 +4,10 @@ import { Readable } from 'stream';
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand
 } from '@aws-sdk/client-s3';
 
@@ -51,12 +53,82 @@ export const uploadFile = async (
   );
 };
 
+// For images pulled out of a parsed document, which never touch the disk.
+export const uploadBuffer = async (
+  objectKey: string,
+  body: Buffer,
+  contentType: string
+): Promise<void> => {
+  const cleanKey = getCleanKey(objectKey);
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: cleanKey,
+      Body: body,
+      ContentType: contentType,
+      ContentLength: body.length
+    })
+  );
+};
+
+// Stream an object without buffering it whole, unlike downloadObject.
+export const getObjectStream = async (
+  objectKey: string
+): Promise<{
+  stream: Readable;
+  contentType?: string;
+  contentLength?: number;
+}> => {
+  const cleanKey = getCleanKey(objectKey);
+  const response = await s3Client.send(
+    new GetObjectCommand({ Bucket: BUCKET_NAME, Key: cleanKey })
+  );
+  return {
+    stream: response.Body as Readable,
+    contentType: response.ContentType,
+    contentLength: response.ContentLength
+  };
+};
+
 // Remove an object (used when a file source is deleted).
 export const deleteObject = async (objectKey: string): Promise<void> => {
   const cleanKey = getCleanKey(objectKey);
   await s3Client.send(
     new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: cleanKey })
   );
+};
+
+// Remove everything under a key prefix. S3 pages at 1000 keys, hence the loop.
+export const deleteObjectsByPrefix = async (prefix: string): Promise<void> => {
+  const cleanPrefix = getCleanKey(prefix);
+  let continuationToken: string | undefined;
+
+  do {
+    const listed = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: cleanPrefix,
+        ContinuationToken: continuationToken
+      })
+    );
+
+    const keys = (listed.Contents ?? [])
+      .map((object) => object.Key)
+      .filter((key): key is string => Boolean(key));
+
+    if (keys.length > 0) {
+      await s3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: BUCKET_NAME,
+          Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true }
+        })
+      );
+    }
+
+    continuationToken = listed.IsTruncated
+      ? listed.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
 };
 
 // Download an object fully into a Buffer — used by the extraction pipeline to
