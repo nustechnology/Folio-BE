@@ -1,4 +1,5 @@
 import { Prisma } from '~/generated/prisma/client';
+import type { ProcessingState } from '~/generated/prisma/enums';
 import { ListSourceOptions } from '~/api/types/source';
 import prisma from '~/prisma/prisma.client';
 
@@ -67,6 +68,38 @@ const countBySpaceId = async (spaceId: string) => {
   return prisma.source.count({ where: { researchSpaceId: spaceId } });
 };
 
+// Sources to re-index, oldest first. Only light columns, so a large corpus
+// isn't pulled into memory at once; text is loaded per source as it runs.
+const findManyForReindex = async (filter: {
+  spaceId?: string;
+  sourceIds?: string[];
+  processingState?: ProcessingState;
+}) => {
+  const where: Prisma.SourceWhereInput = {};
+
+  if (filter.spaceId) {
+    where.researchSpaceId = filter.spaceId;
+  }
+  if (filter.sourceIds && filter.sourceIds.length > 0) {
+    where.id = { in: filter.sourceIds };
+  }
+  if (filter.processingState) {
+    where.processingState = filter.processingState;
+  }
+
+  return prisma.source.findMany({
+    where,
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      sourceType: true,
+      processingState: true,
+      characterCount: true
+    }
+  });
+};
+
 const findManyByOwnerId = async (ownerId: string) => {
   return prisma.source.findMany({
     where: {
@@ -81,6 +114,7 @@ export default {
   create,
   findById,
   findBySpaceId,
+  findManyForReindex,
   update,
   deleteById,
   countBySpaceId,

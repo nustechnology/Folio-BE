@@ -28,6 +28,7 @@ interface EnvInterface {
   MODEL_EMBEDDING_DIMENSIONS: string;
   MODEL_REQUEST_TIMEOUT_MS: string;
   MODEL_MAX_RETRIES: string;
+  MODEL_EMBEDDING_RPM: string;
   CHUNK_PRE_SPLIT_TOKENS: string;
   CHUNK_TARGET_TOKENS: string;
   CHUNK_MAX_TOKENS: string;
@@ -64,20 +65,31 @@ export const env: EnvInterface = {
   MULTER_TEMP_DIR: process.env.MULTER_TEMP_DIR || '',
   REDIS_HOST: process.env.REDIS_HOST || 'localhost',
   REDIS_PORT: process.env.REDIS_PORT || '6379',
+  // Gemini's OpenAI-compatible surface, so the same SDK client works unchanged.
   MODEL_EMBEDDING_BASE_URL:
-    process.env.MODEL_EMBEDDING_BASE_URL || 'https://api.openai.com/v1',
-  MODEL_EMBEDDING_API_KEY: process.env.MODEL_EMBEDDING_API_KEY || '',
+    process.env.MODEL_EMBEDDING_BASE_URL ||
+    'https://generativelanguage.googleapis.com/v1beta/openai',
+  // Embeddings and OCR both run on Gemini, so one key covers a default setup.
+  MODEL_EMBEDDING_API_KEY:
+    process.env.MODEL_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY || '',
   MODEL_EMBEDDING_MODEL:
-    process.env.MODEL_EMBEDDING_MODEL || 'text-embedding-3-small',
+    process.env.MODEL_EMBEDDING_MODEL || 'gemini-embedding-2',
+  // gemini-embedding-2 emits 3072 natively and truncates on request. 1536 is
+  // what Passage.embedding is declared as; changing it needs a migration and a
+  // full re-index (yarn reingest).
   MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1536',
   MODEL_REQUEST_TIMEOUT_MS: process.env.MODEL_REQUEST_TIMEOUT_MS || '60000',
   MODEL_MAX_RETRIES: process.env.MODEL_MAX_RETRIES || '1',
+  // Gemini bills every text inside a batched request separately against its
+  // quota (free tier: 100/min), so this is texts per minute, not HTTP calls.
+  MODEL_EMBEDDING_RPM: process.env.MODEL_EMBEDDING_RPM || '90',
   CHUNK_PRE_SPLIT_TOKENS: process.env.CHUNK_PRE_SPLIT_TOKENS || '160',
   CHUNK_TARGET_TOKENS: process.env.CHUNK_TARGET_TOKENS || '500',
   CHUNK_MAX_TOKENS: process.env.CHUNK_MAX_TOKENS || '800',
   CHUNK_OVERLAP_TOKENS: process.env.CHUNK_OVERLAP_TOKENS || '80',
   CHUNK_BREAKPOINT_PERCENTILE: process.env.CHUNK_BREAKPOINT_PERCENTILE || '90',
-  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '64',
+  // Kept well under MODEL_EMBEDDING_RPM so batches pace smoothly.
+  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '30',
   CHUNK_STRATEGY_VERSION:
     process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',

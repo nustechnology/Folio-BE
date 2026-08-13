@@ -13,8 +13,8 @@ export type NewPassage = {
 // source, then insert the supplied passages — all in one transaction. Also
 // handles the zero-passages case (a re-ingested source that now yields no
 // passages still gets its stale rows removed). Uses raw SQL because Prisma
-// cannot write the `Unsupported("vector(768)")` embedding column via the normal
-// client API — each vector is serialized as a Postgres literal
+// cannot write the `Unsupported("vector(1536)")` embedding column via the
+// normal client API — each vector is serialized as a Postgres literal
 // (`'[...]'::vector`).
 const replaceBySourceId = async (
   sourceId: string,
@@ -38,6 +38,21 @@ const deleteBySourceId = async (sourceId: string): Promise<void> => {
   await prisma.passage.deleteMany({ where: { sourceId } });
 };
 
+// pgvector stores the dimension count in the column's typmod, so this detects a
+// schema that hasn't caught up with MODEL_EMBEDDING_DIMENSIONS.
+const getEmbeddingDimensions = async (): Promise<number> => {
+  const rows = await prisma.$queryRaw<{ dimensions: number }[]>`
+    SELECT atttypmod AS dimensions
+    FROM pg_attribute
+    WHERE attrelid = '"Passage"'::regclass AND attname = 'embedding'
+  `;
+  return Number(rows[0]?.dimensions ?? 0);
+};
+
+const countBySourceId = async (sourceId: string): Promise<number> => {
+  return prisma.passage.count({ where: { sourceId } });
+};
+
 const findByIdAndSourceId = async (id: string, sourceId: string) => {
   return prisma.passage.findFirst({
     where: { id, sourceId }
@@ -53,6 +68,8 @@ const findById = async (id: string) => {
 export default {
   replaceBySourceId,
   deleteBySourceId,
+  getEmbeddingDimensions,
+  countBySourceId,
   findByIdAndSourceId,
   findById
 };
