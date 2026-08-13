@@ -20,10 +20,10 @@ import {
   verifyFileSignature
 } from '~/api/utils/signature.util';
 import { enqueueIngestion } from '~/queues/ingestion.queue';
+import PassageRepository from '~/prisma/repositories/passage.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 import UserRepository from '~/prisma/repositories/user.repository';
-import PassageRepository from '~/prisma/repositories/passage.repository';
 
 const verifySpaceOwnership = async (spaceId: string, userId: string) => {
   const space = await SpaceRepository.findByIdAndOwner(spaceId, userId);
@@ -204,6 +204,62 @@ const createManual = async (
   return source;
 };
 
+/**
+ * A note promoted to evidence (notes REQ-022). The snapshot is a `Manual`
+ * source: the note's plain text is copied into `content` and never read back
+ * from the note again, so later note edits — or the note's deletion — cannot
+ * change what was indexed.
+ *
+ * The `SOURCE_CONTENT_MIN_LENGTH` floor that guards pasted text is deliberately
+ * not applied here: the note already passed the notes capability's own content
+ * rules, and refusing to convert a valid one-line note would be a rule invented
+ * by the source form rather than by the note.
+ */
+const createFromNote = async (
+  spaceId: string,
+  userId: string,
+  note: {
+    id: string;
+    title: string;
+    /** Plain-text projection of the note's markup, produced by the caller. */
+    content: string;
+    /** A saved AI answer, as opposed to something the user typed themselves. */
+    isAssistantAuthored: boolean;
+  },
+  data: { title?: string }
+) => {
+  await verifySpaceOwnership(spaceId, userId);
+
+  const existing = await SourceRepository.findByOriginalNoteId(note.id);
+  if (existing) {
+    throw new AppError(
+      'Source snapshot already exists',
+      StatusCodes.CONFLICT,
+      ErrorCode.NOTE_ALREADY_CONVERTED
+    );
+  }
+
+  const user = await UserRepository.findById(userId);
+  const authorName = user?.name || 'Unknown Author';
+
+  const source = await SourceRepository.create({
+    researchSpace: { connect: { id: spaceId } },
+    originalNote: { connect: { id: note.id } },
+    sourceType: 'Manual',
+    title: data.title?.trim() || note.title,
+    // Attribution follows the reference: a saved answer is the user's material,
+    // but it was not written by them unaided.
+    author: note.isAssistantAuthored
+      ? `AI-assisted note by ${authorName}`
+      : authorName,
+    content: note.content,
+    processingState: 'added'
+  });
+
+  await enqueueIngestion(source.id);
+  return source;
+};
+
 const list = async (
   spaceId: string,
   userId: string,
@@ -226,8 +282,15 @@ const list = async (
   };
 };
 
+/**
+ * Source detail carries its indexed passages: a citation deep-links into the
+ * reader as `#evidence-passage-{id}`, and without the passage list there is
+ * nothing to match that id against, so the highlight never lands.
+ */
 const getById = async (sourceId: string, userId: string) => {
-  return verifySourceOwnership(sourceId, userId);
+  const source = await verifySourceOwnership(sourceId, userId);
+  const passages = await PassageRepository.findBySourceId(sourceId);
+  return { ...source, passages };
 };
 
 const remove = async (sourceId: string, userId: string) => {
@@ -353,6 +416,7 @@ export default {
   createFile,
   createWeb,
   createManual,
+  createFromNote,
   list,
   getById,
   update,

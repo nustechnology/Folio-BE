@@ -63,41 +63,30 @@ const findManyByOwner = async (filters: ListFilters, options: ListOptions) => {
   return { spaces, totalCount };
 };
 
-// Shaped like an entry of the list above: clients bind both to one Space type.
-const findByIdAndOwnerWithCounts = async (spaceId: string, ownerId: string) => {
+const findByIdAndOwner = async (id: string, ownerId: string) => {
+  return prisma.researchSpace.findFirst({ where: { id, ownerId } });
+};
+
+/**
+ * The list projection for a single space. Counts come from the same `_count`
+ * select the list uses, so the sidebar's "N sources · N notes" cannot drift
+ * from the number the spaces grid shows.
+ */
+const findDetailByIdAndOwner = async (id: string, ownerId: string) => {
   const record = await prisma.researchSpace.findFirst({
-    where: { id: spaceId, ownerId },
-    include: {
-      _count: {
-        select: {
-          sources: true,
-          notes: true
-        }
-      }
-    }
+    where: { id, ownerId },
+    include: { _count: { select: { sources: true, notes: true } } }
   });
 
-  if (!record) {
-    return null;
-  }
+  if (!record) return null;
 
   const { _count, ...rest } = record;
-  return {
-    ...rest,
-    sourceCount: _count.sources,
-    noteCount: _count.notes
-  };
+  return { ...rest, sourceCount: _count.sources, noteCount: _count.notes };
 };
 
 const findByNameAndOwner = async (ownerId: string, name: string) => {
   return prisma.researchSpace.findFirst({
     where: { ownerId, name: { equals: name, mode: 'insensitive' } }
-  });
-};
-
-const findByIdAndOwner = async (spaceId: string, ownerId: string) => {
-  return prisma.researchSpace.findFirst({
-    where: { id: spaceId, ownerId }
   });
 };
 
@@ -138,7 +127,7 @@ const create = async (data: {
 export default {
   findManyByOwner,
   findByIdAndOwner,
-  findByIdAndOwnerWithCounts,
+  findDetailByIdAndOwner,
   findByNameAndOwner,
   create
 };

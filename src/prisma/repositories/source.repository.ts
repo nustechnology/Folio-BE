@@ -20,6 +20,19 @@ const findById = async (id: string) => {
   return prisma.source.findFirst({ where: { id } });
 };
 
+const findManyByIds = async (ids: string[]) => {
+  if (ids.length === 0) {
+    return [];
+  }
+  return prisma.source.findMany({ where: { id: { in: ids } } });
+};
+
+const countReadyBySpaceId = async (spaceId: string) => {
+  return prisma.source.count({
+    where: { researchSpaceId: spaceId, processingState: 'ready' }
+  });
+};
+
 const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
   const where: Prisma.SourceWhereInput = {
     researchSpaceId: spaceId
@@ -40,7 +53,7 @@ const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
     ];
   }
 
-  const [records, totalCount] = await Promise.all([
+  const [sources, totalCount] = await Promise.all([
     prisma.source.findMany({
       where,
       orderBy: sortOrderMap[options.sort],
@@ -50,7 +63,7 @@ const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
     prisma.source.count({ where })
   ]);
 
-  return { sources: records, totalCount };
+  return { sources, totalCount };
 };
 
 const update = async (id: string, data: Prisma.SourceUpdateInput) => {
@@ -100,6 +113,15 @@ const findManyForReindex = async (filter: {
   });
 };
 
+/**
+ * A note has at most one snapshot source: `originalNoteId` is only an index, not
+ * unique, so the "already converted" rule is enforced here rather than by the
+ * database.
+ */
+const findByOriginalNoteId = async (originalNoteId: string) => {
+  return prisma.source.findFirst({ where: { originalNoteId } });
+};
+
 const findManyByOwnerId = async (ownerId: string) => {
   return prisma.source.findMany({
     where: {
@@ -113,10 +135,13 @@ const findManyByOwnerId = async (ownerId: string) => {
 export default {
   create,
   findById,
+  findManyByIds,
+  countReadyBySpaceId,
   findBySpaceId,
   findManyForReindex,
   update,
   deleteById,
   countBySpaceId,
+  findByOriginalNoteId,
   findManyByOwnerId
 };

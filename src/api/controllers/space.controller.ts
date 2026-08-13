@@ -22,9 +22,10 @@ const list = async (req: Request, res: Response) => {
   return paginatedResponse(res, 'spaces', spaces, pagination);
 };
 
-const getById = async (req: Request, res: Response) => {
-  const { spaceId } = req.params;
-  const space = await SpaceService.getById(spaceId, req.userId!);
+const get = async (req: Request, res: Response) => {
+  const { spaceId } = req.params as { spaceId: string };
+  const space = await SpaceService.getById(req.userId!, spaceId);
+
   return successResponse(res, { space });
 };
 
@@ -41,6 +42,6 @@ const create = async (req: Request, res: Response) => {
 
 export default {
   list,
-  getById,
+  get,
   create
 };

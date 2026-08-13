@@ -10,7 +10,6 @@
 import pLimit from 'p-limit';
 
 import { chunkAndEmbed } from '~/api/services/chunking.service';
-import { EMBEDDING_DIMENSIONS } from '~/api/services/model-gateway.service';
 import { normalizeToBlocks } from '~/api/services/normalization.service';
 import { publishStatus } from '~/api/services/sse.service';
 import { env } from '~/config/enviroment';
@@ -21,6 +20,12 @@ import PassageRepository from '~/prisma/repositories/passage.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import { enqueueIngestion, ingestionQueue } from '~/queues/ingestion.queue';
 import type { ProcessingState } from '~/generated/prisma/enums';
+
+// The width `Passage.embedding` was migrated to. `model-gateway.service` checks
+// this against what the provider actually returns; this script checks it against
+// the column, so a half-applied model swap is caught before it rewrites the
+// index.
+const EMBEDDING_DIMENSIONS = Number(env.MODEL_EMBEDDING_DIMENSIONS);
 
 const PROCESSING_STATES: ProcessingState[] = [
   'added',

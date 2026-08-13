@@ -75,8 +75,8 @@ const list = async (req: Request, res: Response) => {
       processingState,
       search,
       sort: (sort ?? 'recently-added') as ListSourceOptions['sort'],
-      page,
-      limit
+      page: page ?? 1,
+      limit: limit ?? 10
     }
   );
   return paginatedResponse(res, 'sources', sources, pagination);

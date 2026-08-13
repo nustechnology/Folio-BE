@@ -26,9 +26,18 @@ interface EnvInterface {
   MODEL_EMBEDDING_API_KEY: string;
   MODEL_EMBEDDING_MODEL: string;
   MODEL_EMBEDDING_DIMENSIONS: string;
+  MODEL_CHAT_BASE_URL: string;
+  MODEL_CHAT_API_KEY: string;
+  MODEL_CHAT_MODEL: string;
+  MODEL_CHAT_TEMPERATURE: string;
+  MODEL_CHAT_MAX_TOKENS: string;
   MODEL_REQUEST_TIMEOUT_MS: string;
   MODEL_MAX_RETRIES: string;
   MODEL_EMBEDDING_RPM: string;
+  ASK_RETRIEVAL_CANDIDATES: string;
+  ASK_RETRIEVAL_TOP_K: string;
+  ASK_HISTORY_TURNS: string;
+  ASK_SUGGESTION_CACHE_TTL_S: string;
   CHUNK_PRE_SPLIT_TOKENS: string;
   CHUNK_TARGET_TOKENS: string;
   CHUNK_MAX_TOKENS: string;
@@ -65,23 +74,39 @@ export const env: EnvInterface = {
   MULTER_TEMP_DIR: process.env.MULTER_TEMP_DIR || '',
   REDIS_HOST: process.env.REDIS_HOST || 'localhost',
   REDIS_PORT: process.env.REDIS_PORT || '6379',
-  // Gemini's OpenAI-compatible surface, so the same SDK client works unchanged.
   MODEL_EMBEDDING_BASE_URL:
+    process.env.MODEL_EMBEDDING_BASE_URL || 'https://api.openai.com/v1',
+  MODEL_EMBEDDING_API_KEY: process.env.MODEL_EMBEDDING_API_KEY || '',
+  // The defaults describe the migrated schema: `Passage.embedding` is
+  // `vector(1024)` (migration `20260811120000_embedding_model_bge_m3`) and
+  // bge-m3 is the model that width was chosen for. Changing either means
+  // changing both, plus a migration — the guard in `model-gateway.service.ts`
+  // enforces that they agree.
+  MODEL_EMBEDDING_MODEL: process.env.MODEL_EMBEDDING_MODEL || 'bge-m3',
+  MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1024',
+  // Generation runs through the same OpenAI-compatible surface as embeddings
+  // and defaults to the embedding endpoint's host, so a single local Ollama (or
+  // a single cloud key) serves both without extra configuration.
+  MODEL_CHAT_BASE_URL:
+    process.env.MODEL_CHAT_BASE_URL ||
     process.env.MODEL_EMBEDDING_BASE_URL ||
-    'https://generativelanguage.googleapis.com/v1beta/openai',
-  // Embeddings and OCR both run on Gemini, so one key covers a default setup.
-  MODEL_EMBEDDING_API_KEY:
-    process.env.MODEL_EMBEDDING_API_KEY || process.env.GEMINI_API_KEY || '',
-  MODEL_EMBEDDING_MODEL:
-    process.env.MODEL_EMBEDDING_MODEL || 'gemini-embedding-2',
-  // gemini-embedding-2 emits 3072 natively and truncates on request. 1536 is
-  // what Passage.embedding is declared as; changing it needs a migration and a
-  // full re-index (yarn reingest).
-  MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1536',
+    'https://api.openai.com/v1',
+  MODEL_CHAT_API_KEY:
+    process.env.MODEL_CHAT_API_KEY || process.env.MODEL_EMBEDDING_API_KEY || '',
+  MODEL_CHAT_MODEL: process.env.MODEL_CHAT_MODEL || 'gpt-4o-mini',
+  MODEL_CHAT_TEMPERATURE: process.env.MODEL_CHAT_TEMPERATURE || '0.1',
+  MODEL_CHAT_MAX_TOKENS: process.env.MODEL_CHAT_MAX_TOKENS || '900',
   MODEL_REQUEST_TIMEOUT_MS: process.env.MODEL_REQUEST_TIMEOUT_MS || '60000',
   MODEL_MAX_RETRIES: process.env.MODEL_MAX_RETRIES || '1',
-  // Gemini bills every text inside a batched request separately against its
-  // quota (free tier: 100/min), so this is texts per minute, not HTTP calls.
+  // Retrieval: `CANDIDATES` per branch of the hybrid search, `TOP_K` passages
+  // survive fusion and become the evidence the answer may cite.
+  ASK_RETRIEVAL_CANDIDATES: process.env.ASK_RETRIEVAL_CANDIDATES || '40',
+  ASK_RETRIEVAL_TOP_K: process.env.ASK_RETRIEVAL_TOP_K || '6',
+  ASK_HISTORY_TURNS: process.env.ASK_HISTORY_TURNS || '6',
+  ASK_SUGGESTION_CACHE_TTL_S: process.env.ASK_SUGGESTION_CACHE_TTL_S || '3600',
+  // Texts per minute the embedding provider will accept. Providers that bill
+  // every text inside a batched request separately (Gemini's free tier allows
+  // 100/min) throttle on this rather than on HTTP call count.
   MODEL_EMBEDDING_RPM: process.env.MODEL_EMBEDDING_RPM || '90',
   CHUNK_PRE_SPLIT_TOKENS: process.env.CHUNK_PRE_SPLIT_TOKENS || '160',
   CHUNK_TARGET_TOKENS: process.env.CHUNK_TARGET_TOKENS || '500',
@@ -107,5 +132,16 @@ const missing = [
 if (missing.length > 0) {
   throw new Error(
     `Missing required environment variable(s): ${missing.join(', ')}`
+  );
+}
+
+// Caught at startup rather than at request time: a non-numeric value would make
+// the dimension guard in `model-gateway.service.ts` silently pass everything,
+// and the mismatch would resurface as a Postgres type error deep inside an
+// INSERT that names neither the model nor the setting behind it.
+const dimensions = Number(env.MODEL_EMBEDDING_DIMENSIONS);
+if (!Number.isInteger(dimensions) || dimensions <= 0) {
+  throw new Error(
+    `MODEL_EMBEDDING_DIMENSIONS must be a positive integer, got "${env.MODEL_EMBEDDING_DIMENSIONS}".`
   );
 }
