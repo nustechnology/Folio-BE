@@ -97,7 +97,7 @@ model Passage {
   sourceId        String
   source          Source                     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   content         String
-  embedding       Unsupported("vector(768)")
+  embedding       Unsupported("vector(1024)")
   searchVector    Unsupported("tsvector")
   tokenCount      Int
   strategyVersion String
@@ -157,12 +157,16 @@ model Notebook {
 model Citation {
   id                 String   @id @default(uuid())
   sourceId           String
-  source             Source   @relation(fields: [sourceId], references: [id])
+  source             Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   supportingPassage  String
   pageReference      String?
   paragraphReference String?
   sectionReference   String?
   passageLocator     String?
+  /// Passage the citation was drawn from. Deliberately not a foreign key:
+  /// re-ingesting a source replaces its passages, and a saved note must keep
+  /// its evidence even when the id it points at no longer resolves.
+  passageId          String?
   createdAt          DateTime @default(now())
 
   noteReferences NoteCitation[]
@@ -174,7 +178,11 @@ model NoteCitation {
   noteId     String
   note       Note     @relation(fields: [noteId], references: [id])
   citationId String
-  citation   Citation @relation(fields: [citationId], references: [id])
+  citation   Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
+  /// Rank the citation held in the answer it was saved from. The note body
+  /// carries plain `[n]` markers, so this is what makes marker *n* resolvable
+  /// back to a row — a set with no order would resolve them arbitrarily.
+  position   Int      @default(0)
 
   @@id([noteId, citationId])
   @@index([citationId])

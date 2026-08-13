@@ -15,10 +15,10 @@ import {
   verifyFileSignature
 } from '~/api/utils/signature.util';
 import { enqueueIngestion } from '~/queues/ingestion.queue';
+import PassageRepository from '~/prisma/repositories/passage.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
 import SpaceRepository from '~/prisma/repositories/space.repository';
 import UserRepository from '~/prisma/repositories/user.repository';
-import PassageRepository from '~/prisma/repositories/passage.repository';
 
 const verifySpaceOwnership = async (spaceId: string, userId: string) => {
   const space = await SpaceRepository.findByIdAndOwner(spaceId, userId);
@@ -277,8 +277,15 @@ const list = async (
   };
 };
 
+/**
+ * Source detail carries its indexed passages: a citation deep-links into the
+ * reader as `#evidence-passage-{id}`, and without the passage list there is
+ * nothing to match that id against, so the highlight never lands.
+ */
 const getById = async (sourceId: string, userId: string) => {
-  return verifySourceOwnership(sourceId, userId);
+  const source = await verifySourceOwnership(sourceId, userId);
+  const passages = await PassageRepository.findBySourceId(sourceId);
+  return { ...source, passages };
 };
 
 const remove = async (sourceId: string, userId: string) => {

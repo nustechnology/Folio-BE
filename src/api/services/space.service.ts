@@ -22,6 +22,24 @@ const list = async (ownerId: string, options: ListOptions) => {
   };
 };
 
+/**
+ * Not found rather than forbidden for someone else's space, matching every
+ * other space-scoped route (`assertSpaceAccess`).
+ */
+const getById = async (ownerId: string, spaceId: string) => {
+  const space = await SpaceRepository.findDetailByIdAndOwner(spaceId, ownerId);
+
+  if (!space) {
+    throw new AppError(
+      'Research space not found.',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SPACE_NOT_FOUND
+    );
+  }
+
+  return space;
+};
+
 const create = async (
   ownerId: string,
   data: { name: string; researchObjective?: string }
@@ -86,23 +104,10 @@ const remove = async (ownerId: string, id: string) => {
   return SpaceRepository.remove(id);
 };
 
-const get = async (ownerId: string, id: string) => {
-  const space = await SpaceRepository.findByIdAndOwnerWithCounts(id, ownerId);
-  if (!space) {
-    throw new AppError(
-      'Space not found.',
-      StatusCodes.NOT_FOUND,
-      ErrorCode.SPACE_NOT_FOUND
-    );
-  }
-
-  return space;
-};
-
 export default {
   list,
+  getById,
   create,
   update,
-  remove,
-  get
+  remove
 };

@@ -1,20 +1,14 @@
 import Joi from 'joi';
 
+import { spaceIdBodyField } from '~/api/routes/validators/common.validator';
 import {
+  PAGINATION,
   SOURCE_AUTHOR_MAX_LENGTH,
   SOURCE_CONTENT_MAX_LENGTH,
   SOURCE_CONTENT_MIN_LENGTH,
   SOURCE_TITLE_MAX_LENGTH,
-  SOURCE_URL_MAX_LENGTH,
-  PAGINATION
+  SOURCE_URL_MAX_LENGTH
 } from '~/api/utils/constants';
-
-const spaceIdField = () =>
-  Joi.string().uuid().required().messages({
-    'string.empty': 'Space is required',
-    'any.required': 'Space is required',
-    'string.guid': 'Invalid space'
-  });
 
 const sourceTypeField = (type: string) =>
   Joi.string().valid(type).required().messages({
@@ -38,12 +32,8 @@ const authorField = () =>
     .allow('')
     .messages({ 'string.max': 'Author is too long' });
 
-export const sourceIdParamSchema = Joi.object({
-  sourceId: Joi.string().uuid().required()
-});
-
 export const createWebSourceSchema = Joi.object({
-  spaceId: spaceIdField(),
+  spaceId: spaceIdBodyField(),
   sourceType: sourceTypeField('Web'),
   sourceUrl: Joi.string()
     .uri({ scheme: ['http', 'https'] })
@@ -59,7 +49,7 @@ export const createWebSourceSchema = Joi.object({
 });
 
 export const createManualSourceSchema = Joi.object({
-  spaceId: spaceIdField(),
+  spaceId: spaceIdBodyField(),
   sourceType: sourceTypeField('Manual'),
   title: titleField(),
   author: authorField(),
@@ -77,7 +67,7 @@ export const createManualSourceSchema = Joi.object({
 });
 
 export const createFileSourceSchema = Joi.object({
-  spaceId: spaceIdField(),
+  spaceId: spaceIdBodyField(),
   sourceType: sourceTypeField('File'),
   title: titleField(),
   author: authorField()

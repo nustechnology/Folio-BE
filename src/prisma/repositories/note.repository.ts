@@ -7,8 +7,48 @@ const citationCountInclude = {
   _count: { select: { citationReferences: true } }
 } satisfies Prisma.NoteInclude;
 
+/**
+ * A single note ships the evidence itself, not just how much of it there is:
+ * the viewer resolves the `[n]` markers in the body against this list, so it
+ * must arrive in the order the answer cited it. The source is joined for the
+ * title/type/author the citation modal prints — the `Citation` row records only
+ * the passage.
+ */
+/*
+ * The secondary keys are what make the ordering deterministic for notes saved
+ * before `position` existed: migration `20260811000000_add_note_citation_position`
+ * left every one of their rows at the default `0`, and its claim that "their
+ * markers resolve in insertion order" holds only if something breaks the tie —
+ * Postgres is free to return equal keys in any order, so the same note could
+ * print `[1]` and `[2]` against different evidence on consecutive reads.
+ * `citation.createdAt` is the closest stand-in for insertion order the schema
+ * kept; `citationId` settles rows written inside one transaction, where that
+ * timestamp is identical.
+ */
+const citationDetailInclude = {
+  ...citationCountInclude,
+  citationReferences: {
+    orderBy: [
+      { position: 'asc' },
+      { citation: { createdAt: 'asc' } },
+      { citationId: 'asc' }
+    ],
+    include: {
+      citation: {
+        include: {
+          source: { select: { id: true, title: true, sourceType: true, author: true } }
+        }
+      }
+    }
+  }
+} satisfies Prisma.NoteInclude;
+
 export type NoteRecord = Prisma.NoteGetPayload<{
   include: typeof citationCountInclude;
+}>;
+
+export type NoteDetailRecord = Prisma.NoteGetPayload<{
+  include: typeof citationDetailInclude;
 }>;
 
 const sortOrderMap: Record<
@@ -61,7 +101,7 @@ const findManyBySpace = async (
 const findByIdInSpace = async (id: string, researchSpaceId: string) => {
   return prisma.note.findFirst({
     where: { id, researchSpaceId },
-    include: citationCountInclude
+    include: citationDetailInclude
   });
 };
 
@@ -71,8 +111,25 @@ const create = async (data: {
   content: string;
   contentText: string;
   originType: OriginType;
+  originConversationId?: string;
+  originMessageId?: string;
+  /** Citation rows written when the answer was generated, in cited order. */
+  citationIds?: string[];
 }) => {
-  return prisma.note.create({ data, include: citationCountInclude });
+  const { citationIds = [], ...note } = data;
+
+  return prisma.note.create({
+    data: {
+      ...note,
+      citationReferences: {
+        create: citationIds.map((citationId, position) => ({
+          citationId,
+          position
+        }))
+      }
+    },
+    include: citationDetailInclude
+  });
 };
 
 /**
@@ -97,7 +154,7 @@ const update = async (
   return prisma.note.update({
     where: { id, researchSpaceId },
     data,
-    include: citationCountInclude
+    include: citationDetailInclude
   });
 };
 

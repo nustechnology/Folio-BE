@@ -22,6 +22,13 @@ const list = async (req: Request, res: Response) => {
   return paginatedResponse(res, 'spaces', spaces, pagination);
 };
 
+const get = async (req: Request, res: Response) => {
+  const { spaceId } = req.params as { spaceId: string };
+  const space = await SpaceService.getById(req.userId!, spaceId);
+
+  return successResponse(res, { space });
+};
+
 const create = async (req: Request, res: Response) => {
   const { name, researchObjective } = req.body;
   const space = await SpaceService.create(req.userId!, {
@@ -34,9 +41,9 @@ const create = async (req: Request, res: Response) => {
 };
 
 const update = async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const { spaceId } = req.params as { spaceId: string };
   const { name, researchObjective } = req.body;
-  const space = await SpaceService.update(req.userId!, id, {
+  const space = await SpaceService.update(req.userId!, spaceId, {
     name,
     researchObjective
   });
@@ -45,23 +52,16 @@ const update = async (req: Request, res: Response) => {
 };
 
 const remove = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  await SpaceService.remove(req.userId!, id);
+  const { spaceId } = req.params as { spaceId: string };
+  await SpaceService.remove(req.userId!, spaceId);
 
   return successResponse(res, { success: true });
 };
 
-const get = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const space = await SpaceService.get(req.userId!, id);
-
-  return successResponse(res, { space });
-};
-
 export default {
   list,
+  get,
   create,
   update,
-  remove,
-  get
+  remove
 };

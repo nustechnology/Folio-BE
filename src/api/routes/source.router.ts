@@ -9,9 +9,9 @@ import {
   validateParams,
   validateQuery
 } from '~/api/middlewares/validation.middleware';
+import { sourceIdParamSchema } from '~/api/routes/validators/common.validator';
 import {
   listSourcesQuerySchema,
-  sourceIdParamSchema,
   updateSourceSchema
 } from '~/api/routes/validators/source.validator';
 

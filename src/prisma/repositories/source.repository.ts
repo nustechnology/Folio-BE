@@ -19,6 +19,19 @@ const findById = async (id: string) => {
   return prisma.source.findFirst({ where: { id } });
 };
 
+const findManyByIds = async (ids: string[]) => {
+  if (ids.length === 0) {
+    return [];
+  }
+  return prisma.source.findMany({ where: { id: { in: ids } } });
+};
+
+const countReadyBySpaceId = async (spaceId: string) => {
+  return prisma.source.count({
+    where: { researchSpaceId: spaceId, processingState: 'ready' }
+  });
+};
+
 const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
   const where: Prisma.SourceWhereInput = {
     researchSpaceId: spaceId
@@ -39,7 +52,7 @@ const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
     ];
   }
 
-  const [records, totalCount] = await Promise.all([
+  const [sources, totalCount] = await Promise.all([
     prisma.source.findMany({
       where,
       orderBy: sortOrderMap[options.sort],
@@ -49,7 +62,7 @@ const findBySpaceId = async (spaceId: string, options: ListSourceOptions) => {
     prisma.source.count({ where })
   ]);
 
-  return { sources: records, totalCount };
+  return { sources, totalCount };
 };
 
 const update = async (id: string, data: Prisma.SourceUpdateInput) => {
@@ -89,6 +102,8 @@ const findManyByOwnerId = async (ownerId: string) => {
 export default {
   create,
   findById,
+  findManyByIds,
+  countReadyBySpaceId,
   findBySpaceId,
   update,
   deleteById,

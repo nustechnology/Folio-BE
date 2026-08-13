@@ -36,7 +36,8 @@ Routers are thin (Joi validation, middleware composition, response). Controllers
 
 - **Entrypoint**: `src/index.ts`
 - **Express app**: `src/api/index.ts` — mounts `/api/v1`, Swagger UI at `/api-docs`, global error middleware
-- **Routes**: `src/api/routes/index.ts` — mounts `users`, `auth`, `spaces`, `sources`
+- **Routes**: `src/api/routes/index.ts` — mounts `users`, `auth`, `spaces`, `sources`. `spaces` nests `notes`, `ask` and `conversations` under `/:spaceId`
+- **Ask (grounded QA)**: `ask.service.ts` orchestrates one answer — scope resolution → `retrieval.service.ts` (hybrid search + citation locators) → `ask-prompt.service.ts` (prompt + answer post-processing) → `model-gateway.service.ts` (streamed completion). The controller owns the SSE transport via `sse.service.ts#openEventStream`; `ask-suggestion.service.ts` backs the empty-state chips
 - **Ingestion worker**: `src/workers/ingestion.worker.ts` — separate process (`yarn dev:worker`); picks `ingestion` BullMQ jobs and runs extract → normalize → chunk → embed → index
 - **Queue**: `src/queues/ingestion.queue.ts` — enqueues `{ sourceId }` jobs after source creation/retry
 - **Config**: `src/config/enviroment.ts` (note: misspelled filename), `logger.ts`, `request-context.ts`, `redis.ts`, `minio.ts`
@@ -69,6 +70,7 @@ Routers are thin (Joi validation, middleware composition, response). Controllers
 - Local: `docker compose up -d db redis minio`
 - `DATABASE_URL` uses host `localhost` for host-based dev, `db` when running inside Compose
 - Postgres uses the `pgvector/pgvector:pg16` image — the `vector` extension enables semantic search on `Passage.embedding`
+- Retrieval is hybrid: `Passage.embedding` (ivfflat, cosine) fused with the generated `Passage.searchVector` tsvector (GIN) via Reciprocal Rank Fusion in `passage.repository.ts#searchHybrid`
 - Adminer at `localhost:8080`
 - Models: `User`, `ResearchSpace`, `Source`, `Passage`, `Conversation`, `Note`, `Notebook`, `Citation`, `NoteCitation`
 

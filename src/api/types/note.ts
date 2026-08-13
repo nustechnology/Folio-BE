@@ -1,4 +1,14 @@
+import { AnswerCitation } from '~/api/types/ask';
 import { OriginType } from '~/generated/prisma/client';
+
+/**
+ * A citation as a saved note carries it. Same shape the chat uses, except
+ * `passageId` may be absent: rows written before the column existed have none,
+ * and the reader deep-link is what depends on it — not the evidence text.
+ */
+export type SavedCitation = Omit<AnswerCitation, 'passageId'> & {
+  passageId: string | null;
+};
 
 export type NoteSort =
   | 'recently-updated'
@@ -22,9 +32,19 @@ export type ListNotesOptions = {
   limit: number;
 };
 
+/**
+ * Present when the note is being saved from a chat answer. The API resolves the
+ * message itself rather than trusting the client for its text or citations.
+ */
+export type NoteOrigin = {
+  conversationId: string;
+  messageId: string;
+};
+
 export type CreateNoteInput = {
   title?: string;
   content: string;
+  origin?: NoteOrigin;
 };
 
 /**

@@ -38,10 +38,6 @@ export const createSpaceSchema = Joi.object({
     .optional()
 });
 
-export const spaceIdParamsSchema = Joi.object({
-  id: Joi.string().required()
-});
-
 export const updateSpaceSchema = Joi.object({
   name: Joi.string()
     .trim()

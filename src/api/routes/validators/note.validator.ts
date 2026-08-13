@@ -7,15 +7,6 @@ import {
 } from '~/api/utils/constants';
 import { OriginType } from '~/generated/prisma/client';
 
-export const spaceIdParamSchema = Joi.object({
-  spaceId: Joi.string().uuid().required()
-});
-
-export const noteParamsSchema = Joi.object({
-  spaceId: Joi.string().uuid().required(),
-  noteId: Joi.string().uuid().required()
-});
-
 export const listNotesQuerySchema = Joi.object({
   search: Joi.string().allow('').optional(),
   sort: Joi.string()
@@ -61,7 +52,12 @@ export const createNoteSchema = Joi.object({
       'string.min': 'Content cannot be empty',
       'any.required': 'Content cannot be empty',
       'string.max': 'Content exceeds the maximum allowed size'
-    })
+    }),
+  /** Set when saving a chat answer; both ids are needed to resolve it. */
+  origin: Joi.object({
+    conversationId: Joi.string().uuid().required(),
+    messageId: Joi.string().uuid().required()
+  }).optional()
 });
 
 /**

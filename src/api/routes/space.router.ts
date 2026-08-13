@@ -1,7 +1,10 @@
 import { Router } from 'express';
 
 import SpaceController from '~/api/controllers/space.controller';
+import AskRouter from '~/api/routes/ask.router';
+import ConversationRouter from '~/api/routes/conversation.router';
 import NoteRouter from '~/api/routes/note.router';
+import NotebookRouter from '~/api/routes/notebook.router';
 import { auth } from '~/api/middlewares/auth.middleware';
 import { asyncHandler } from '~/api/middlewares/async-handler.middleware';
 import {
@@ -9,10 +12,10 @@ import {
   validateParams,
   validateQuery
 } from '~/api/middlewares/validation.middleware';
+import { spaceIdParamSchema } from '~/api/routes/validators/common.validator';
 import {
   createSpaceSchema,
   listSpacesQuerySchema,
-  spaceIdParamsSchema,
   updateSpaceSchema
 } from '~/api/routes/validators/space.validator';
 
@@ -33,27 +36,30 @@ router.post(
 );
 
 router.get(
-  '/:id',
+  '/:spaceId',
   auth,
-  validateParams(spaceIdParamsSchema),
+  validateParams(spaceIdParamSchema),
   asyncHandler(SpaceController.get)
 );
 
 router.patch(
-  '/:id',
+  '/:spaceId',
   auth,
-  validateParams(spaceIdParamsSchema),
+  validateParams(spaceIdParamSchema),
   validateBody(updateSpaceSchema),
   asyncHandler(SpaceController.update)
 );
 
 router.delete(
-  '/:id',
+  '/:spaceId',
   auth,
-  validateParams(spaceIdParamsSchema),
+  validateParams(spaceIdParamSchema),
   asyncHandler(SpaceController.remove)
 );
 
 router.use('/:spaceId/notes', NoteRouter);
+router.use('/:spaceId/notebook', NotebookRouter);
+router.use('/:spaceId/ask', AskRouter);
+router.use('/:spaceId/conversations', ConversationRouter);
 
 export default router;
