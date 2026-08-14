@@ -26,6 +26,94 @@ const client = new OpenAI({
   maxRetries: Number(env.MODEL_MAX_RETRIES)
 });
 
+// Metered providers bill every text inside a batched request separately, so one
+// call with 64 inputs spends 64 of the minute (Gemini's free tier allows 100).
+// A sliding window meters that in texts/minute: a request is admitted only if
+// the trailing 60s plus its own cost still fits. A refilling token bucket would
+// allow a burst and refill inside the same 60s, which is what such providers
+// reject. Per-process — two workers on one key each get their own window.
+//
+// Defaults to 90/min when MODEL_EMBEDDING_RPM is blank or absent. Set it to 0
+// when pointing at a self-hosted model with no quota, where a standing cap
+// would only throttle local ingestion.
+const RATE_LIMIT_RPM = Math.max(0, Number(env.MODEL_EMBEDDING_RPM) || 0);
+const RATE_LIMIT_WINDOW_MS = 60_000;
+let spent: { at: number; cost: number }[] = [];
+let gate: Promise<void> = Promise.resolve();
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const consumeRateLimit = async (count: number): Promise<void> => {
+  // Zero means no metering at all — not even the serializing gate below, which
+  // would otherwise queue every batch behind the last for no reason.
+  if (RATE_LIMIT_RPM === 0) {
+    return;
+  }
+
+  // A batch bigger than the whole budget can never be admitted, so clamp it.
+  const cost = Math.min(count, RATE_LIMIT_RPM);
+
+  const previous = gate;
+  let release!: () => void;
+  gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+
+  try {
+    for (;;) {
+      const now = Date.now();
+      spent = spent.filter((entry) => entry.at > now - RATE_LIMIT_WINDOW_MS);
+      const used = spent.reduce((sum, entry) => sum + entry.cost, 0);
+
+      if (used + cost <= RATE_LIMIT_RPM) {
+        spent.push({ at: now, cost });
+        return;
+      }
+
+      // Wait for the oldest entries to age out until this batch fits.
+      let freed = 0;
+      let readyAt = now;
+      for (const entry of spent) {
+        freed += entry.cost;
+        readyAt = entry.at + RATE_LIMIT_WINDOW_MS;
+        if (used - freed + cost <= RATE_LIMIT_RPM) {
+          break;
+        }
+      }
+      const waitMs = Math.max(50, readyAt - now + 50);
+      logger.debug('Embedding rate limit reached, waiting for budget', {
+        waitMs,
+        cost,
+        used,
+        rpm: RATE_LIMIT_RPM
+      });
+      await sleep(waitMs);
+    }
+  } finally {
+    release();
+  }
+};
+
+// Provider 429s carry their own backoff hint, which beats a guessed delay.
+const RETRY_HINT = /retry in ([\d.]+)s/i;
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+const isRateLimitError = (error: unknown): boolean =>
+  (error instanceof OpenAI.APIError && error.status === 429) ||
+  (error instanceof Error && error.message.includes('429'));
+
+const retryDelayMs = (error: unknown, attempt: number): number => {
+  const match =
+    error instanceof Error ? RETRY_HINT.exec(error.message) : undefined;
+  if (match) {
+    return Math.ceil(Number(match[1]) * 1000) + 500;
+  }
+  // No hint — back off over the window the quota is measured in.
+  return Math.min(60_000, 5_000 * 2 ** attempt);
+};
+
 // Generation may live behind a different host/key than embeddings (a local
 // Ollama for vectors, a hosted model for answers), so it gets its own client.
 const chatClient = new OpenAI({
@@ -91,10 +179,42 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
   }
 
   try {
-    const response = await client.embeddings.create({
-      model: env.MODEL_EMBEDDING_MODEL,
-      input: texts
-    });
+    let response;
+    for (let attempt = 0; ; attempt++) {
+      await consumeRateLimit(texts.length);
+      try {
+        response = await client.embeddings.create({
+          model: env.MODEL_EMBEDDING_MODEL,
+          input: texts
+        });
+        break;
+      } catch (error) {
+        if (!isRateLimitError(error) || attempt >= MAX_RATE_LIMIT_RETRIES) {
+          throw error;
+        }
+        // The provider says we are over budget, so our local accounting is
+        // behind (another process on the same key, or usage from before this
+        // one started). Book the whole budget as spent, back-dated so it ages
+        // out exactly when the provider says we may retry — that stops any
+        // concurrent job from sending in the meantime without idling for a
+        // full window longer than the provider actually asked for.
+        const delay = retryDelayMs(error, attempt);
+        spent = [
+          {
+            at: Date.now() - RATE_LIMIT_WINDOW_MS + delay,
+            cost: RATE_LIMIT_RPM
+          }
+        ];
+        logger.warn('Embedding request rate limited, backing off', {
+          attempt: attempt + 1,
+          delayMs: delay,
+          batchSize: texts.length,
+          model: env.MODEL_EMBEDDING_MODEL
+        });
+        await sleep(delay);
+      }
+    }
+
     const embeddings = response.data.map((item) => item.embedding);
     assertExpectedDimensions(embeddings[0]?.length);
     return embeddings;

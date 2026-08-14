@@ -39,6 +39,34 @@ const deleteBySourceId = async (sourceId: string): Promise<void> => {
   await prisma.passage.deleteMany({ where: { sourceId } });
 };
 
+// pgvector stores the dimension count in the column's typmod, so this detects a
+// schema that hasn't caught up with MODEL_EMBEDDING_DIMENSIONS.
+const getEmbeddingDimensions = async (): Promise<number> => {
+  const rows = await prisma.$queryRaw<{ dimensions: number }[]>`
+    SELECT atttypmod AS dimensions
+    FROM pg_attribute
+    WHERE attrelid = '"Passage"'::regclass AND attname = 'embedding'
+  `;
+  return Number(rows[0]?.dimensions ?? 0);
+};
+
+const countBySourceId = async (sourceId: string): Promise<number> => {
+  return prisma.passage.count({ where: { sourceId } });
+};
+
+const findByIdAndSourceId = async (id: string, sourceId: string) => {
+  return prisma.passage.findFirst({
+    where: { id, sourceId }
+  });
+};
+
+// Backs the source reader's citation deep-link (`#evidence-passage-<id>`).
+const findById = async (id: string) => {
+  return prisma.passage.findUnique({
+    where: { id }
+  });
+};
+
 export type PassageLocator = {
   blockRange?: [number, number];
   headingPath?: string[];
@@ -194,6 +222,10 @@ const countBySpaceId = async (researchSpaceId: string): Promise<number> => {
 export default {
   replaceBySourceId,
   deleteBySourceId,
+  getEmbeddingDimensions,
+  countBySourceId,
+  findByIdAndSourceId,
+  findById,
   searchHybrid,
   findBySourceId,
   countBySpaceId

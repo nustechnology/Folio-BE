@@ -4,136 +4,71 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 import { JSDOM } from 'jsdom';
-import JSZip from 'jszip';
-import mammoth from 'mammoth';
-import pLimit from 'p-limit';
 
+import { createMediaSink } from '~/api/services/media.service';
 import { getFileExtension } from '~/api/utils/file.util';
-import { downloadObject } from '~/api/utils/minio.util';
+import { htmlToText } from '~/api/utils/html-to-text.util';
+import {
+  downloadObject,
+  normalizeStoredObjectKey
+} from '~/api/utils/minio.util';
+import { escapeHtml } from '~/api/utils/source-html.util';
+import logger from '~/config/logger';
 import type { SourceType } from '~/generated/prisma/enums';
+import ParseService from '~/api/services/parse.service';
 
 // ExtractInput is what the worker feeds in; sourceUrl is the MinIO object key
 // for File sources or the article URL for Web sources.
 export type ExtractInput = {
+  sourceId: string;
   sourceType: SourceType;
   sourceUrl?: string | null;
   content?: string;
+  fileType?: string | null;
 };
 
 export type ExtractResult = {
   content: string;
+  structuredContent?: any;
   title?: string;
   author?: string;
   pageCount?: number;
   characterCount: number;
 };
 
-// Rough tag stripper for XML-based containers (PPTX slides, XLSX strings,
-// EPUB documents) — good enough to pull readable text without a full HTML parser.
-const stripTags = (xml: string): string => {
-  return xml
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-};
-
-// PDF: pdfjs-dist is ESM-only, hence the dynamic import (the project compiles
-// to CommonJS). Text is read page-by-page with a `[page N]` marker preserved so
-// the chunking pipeline can attach page-level citation locators later.
-const extractFromPdf = async (buffer: Buffer): Promise<string> => {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
-
-  let text = '';
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item) => (item as { str?: string }).str ?? '')
-      .join(' ');
-    text += `[page ${i}]\n${pageText}\n\n`;
-  }
-
-  return text.trim();
-};
-
-// DOCX: mammoth converts the document to plain text directly from a buffer.
-const extractFromDocx = async (buffer: Buffer): Promise<string> => {
-  const result = await mammoth.extractRawText({ buffer });
-  return result.value.trim();
-};
-
-// Markdown: parsed to an mdast tree (remark supports GitHub-flavored markdown),
-// then flattened to plain text via mdast-util-to-string. These packages are
-// ESM-only, hence dynamic imports.
-const extractFromMarkdown = async (buffer: Buffer): Promise<string> => {
-  const { unified } = await import('unified');
-  const remarkParse = (await import('remark-parse')).default;
-  const remarkGfm = (await import('remark-gfm')).default;
-  const { toString } = await import('mdast-util-to-string');
-
-  const text = buffer.toString('utf8');
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(text);
-  return toString(tree as never).trim();
-};
-
-// Plain text (txt/csv): no parsing needed, just decode UTF-8.
-const extractFromPlainText = (buffer: Buffer): string => {
-  return buffer.toString('utf8').trim();
-};
-
-// PPTX: PowerPoint files are ZIP archives; slide text lives in
-// ppt/slides/slideN.xml. Extract text from each slide in page order.
-const extractFromPptx = async (buffer: Buffer): Promise<string> => {
-  const zip = await JSZip.loadAsync(buffer);
-  const slideNames = Object.keys(zip.files)
-    .filter((name) => /ppt\/slides\/slide\d+\.xml$/.test(name))
-    .sort(
-      (a, b) =>
-        Number(a.match(/slide(\d+)\.xml$/)?.[1]) -
-        Number(b.match(/slide(\d+)\.xml$/)?.[1])
-    );
-
-  let text = '';
-  for (const name of slideNames) {
-    const file = zip.file(name);
-    if (!file) continue;
-    const xml = await file.async('string');
-    text += `${stripTags(xml)}\n`;
-  }
-  return text.trim();
-};
-
-const extractFromXlsx = async (buffer: Buffer): Promise<string> => {
-  const zip = await JSZip.loadAsync(buffer);
-  const shared = zip.file('xl/sharedStrings.xml');
-  if (!shared) return '';
-
-  const xml = await shared.async('string');
-  const cells =
-    xml
-      .match(/<si>[\s\S]*?<\/si>/g)
-      ?.map((si) => stripTags(si))
-      .filter(Boolean) ?? [];
-  return cells.join('\n').trim();
-};
-
-const extractFromEpub = async (buffer: Buffer): Promise<string> => {
-  const zip = await JSZip.loadAsync(buffer);
-  const entries = Object.values(zip.files).filter(
-    (file) => !file.dir && /\.(x?html|htm)$/i.test(file.name)
-  );
-
-  const limit = pLimit(4);
-  const parts = await Promise.all(
-    entries.map((entry) =>
-      limit(async () => {
-        const xml = await entry.async('string');
-        return stripTags(xml);
-      })
+const getFormatFromMimeAndExt = (
+  mimeType?: string | null,
+  ext?: string | null
+): string => {
+  if (mimeType) {
+    const mime = mimeType.split(';')[0].trim().toLowerCase();
+    if (mime === 'application/pdf') return 'pdf';
+    if (
+      mime ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     )
-  );
-  return parts.filter(Boolean).join('\n').trim();
+      return 'docx';
+    if (
+      mime === 'text/markdown' ||
+      mime === 'text/x-markdown' ||
+      mime === 'text/md'
+    )
+      return 'md';
+    if (
+      mime ===
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    )
+      return 'pptx';
+    if (
+      mime ===
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+      return 'xlsx';
+    if (mime === 'application/epub+zip') return 'epub';
+    if (mime === 'text/plain') return 'txt';
+    if (mime === 'text/csv') return 'csv';
+  }
+  return ext?.toLowerCase() || '';
 };
 
 // ---------------------------------------------------------------------------
@@ -371,6 +306,8 @@ type Hop = {
   response: http.IncomingMessage;
   cleanup: () => void;
   signal: AbortSignal;
+  // The last hop after redirects, which relative links resolve against.
+  finalUrl: string;
 };
 
 // Perform a single HTTP(S) hop pinned to a pre-validated IP. The `lookup`
@@ -407,8 +344,14 @@ const fetchHop = async (url: string): Promise<Hop> => {
             servername: hostname,
             // No connection pooling: each hop gets a fresh socket that closes
             // once its response is consumed, so no lingering keep-alive sockets.
-            agent: false,
-            headers: { 'User-Agent': 'Folio-RAG/1.0' },
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              Accept:
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+              Connection: 'close'
+            },
             lookup: (
               lookupHost: string,
               _opts: unknown,
@@ -432,7 +375,7 @@ const fetchHop = async (url: string): Promise<Hop> => {
     );
     // Success: keep the deadline + abort listener active so body consumption is
     // still bounded. The caller invokes `cleanup()` after the body is read.
-    return { response, cleanup, signal: controller.signal };
+    return { response, cleanup, signal: controller.signal, finalUrl: url };
   } catch (error) {
     cleanup(); // hop failed (including timeout) — the deadline is over
     if (controller.signal.aborted) {
@@ -481,62 +424,266 @@ const fetchApproved = async (urlString: string): Promise<Hop> => {
   throw new Error(`Too many redirects (max ${MAX_REDIRECTS}).`);
 };
 
+// Relative URLs stop resolving once the markup is stored on its own, so they
+// are rewritten against the URL the page came from.
+const absolutizeUrls = (html: string, baseUrl: string): string => {
+  const dom = new JSDOM(`<body>${html}</body>`);
+  const { document } = dom.window;
+
+  for (const [selector, attribute] of [
+    ['img[src]', 'src'],
+    ['a[href]', 'href']
+  ] as const) {
+    for (const element of Array.from(document.querySelectorAll(selector))) {
+      const value = element.getAttribute(attribute);
+      if (!value || value.startsWith('#') || /^data:/i.test(value)) {
+        continue;
+      }
+      try {
+        element.setAttribute(attribute, new URL(value, baseUrl).toString());
+      } catch {
+        element.removeAttribute(attribute);
+      }
+    }
+  }
+
+  return document.body.innerHTML;
+};
+
+// Peel Jina Reader's `Key: value` header block off the article. It ends at
+// `Markdown Content:`; without that marker the scan stops at the first line
+// that isn't a key/value pair, so no prose is eaten.
+const splitJinaPreamble = (
+  markdown: string
+): { meta: Record<string, string>; body: string } => {
+  const lines = markdown.split(/\r?\n/);
+  const meta: Record<string, string> = {};
+  let index = 0;
+  let sawMarker = false;
+
+  for (; index < lines.length; index++) {
+    const line = lines[index].trim();
+    if (!line) {
+      continue;
+    }
+    if (/^markdown content:$/i.test(line)) {
+      sawMarker = true;
+      index++;
+      break;
+    }
+
+    const pair = line.match(/^([A-Za-z][A-Za-z ]{1,24}):\s*(.*)$/);
+    if (!pair) {
+      break;
+    }
+    meta[pair[1].trim().toLowerCase()] = pair[2].trim();
+  }
+
+  // No recognizable header at all — treat the whole payload as the article.
+  if (!sawMarker && Object.keys(meta).length === 0) {
+    return { meta, body: markdown };
+  }
+
+  return { meta, body: lines.slice(index).join('\n') };
+};
+
 const extractFromWeb = async (
   url: string
 ): Promise<{
   content: string;
+  html?: string;
   title?: string;
   author?: string;
 }> => {
-  // Fetch the article, render it with jsdom, then run Mozilla's Readability to
-  // strip navigation/ads and keep only the main article text. Also extracts the
-  // page <title> and <meta name="author"> so they can fill blank source fields.
-  const hop = await fetchApproved(url);
-  try {
-    const status = hop.response.statusCode ?? 0;
-    if (status < 200 || status >= 300) {
-      // Drain (capped) the error body so the socket is released back to the pool.
-      await readBodyWithLimit(
-        hop.response,
-        MAX_WEB_BODY_BYTES,
-        hop.signal,
-        `Request to ${url} timed out.`
-      ).catch(() => {});
-      throw new Error(`Failed to fetch URL: ${status}`);
-    }
-    const html = (
-      await readBodyWithLimit(
-        hop.response,
-        MAX_WEB_BODY_BYTES,
-        hop.signal,
-        `Request to ${url} timed out.`
-      )
-    ).toString('utf8');
-    const dom = new JSDOM(html, { url });
+  let contentText = '';
+  let contentHtml = '';
+  let title: string | undefined;
+  let author: string | undefined;
+  let fetchedViaJina = false;
 
+  // 1. Try Jina Reader API first to get fully-rendered Markdown (executes client-side JS and cleans page)
+  try {
+    logger.info('[Extractor] Fetching page markdown via Jina Reader API', {
+      url
+    });
+    // Encode target URL so query params like ?query=1&item=2 are preserved!
+    const jinaUrl = `https://r.jina.ai/${encodeURIComponent(url)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+    // The deadline has to tear the socket down itself: before headers arrive
+    // nothing is reading `signal`, so an abort that only flips the flag would
+    // leave the promise below pending until the OS gave up. Same wiring as
+    // `fetchHop`.
+    let jinaRequest: http.ClientRequest | undefined;
+    const onAbort = () => jinaRequest?.destroy(new Error('timed out'));
+    controller.signal.addEventListener('abort', onAbort);
+
+    const response = await new Promise<http.IncomingMessage>(
+      (resolve, reject) => {
+        const parsed = new URL(jinaUrl);
+        const transport = parsed.protocol === 'https:' ? https : http;
+        const req = transport.request(
+          {
+            hostname: parsed.hostname,
+            port: parsed.port ? Number(parsed.port) : undefined,
+            path: `${parsed.pathname}${parsed.search}`,
+            method: 'GET',
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'X-No-Cache': 'true',
+              Connection: 'close'
+            }
+          },
+          (res) => resolve(res)
+        );
+        jinaRequest = req;
+        req.on('error', reject);
+        req.end();
+      }
+    );
+
+    try {
+      const status = response.statusCode ?? 0;
+      if (status === 200) {
+        const markdown = (
+          await readBodyWithLimit(
+            response,
+            MAX_WEB_BODY_BYTES,
+            controller.signal,
+            `Request to Jina Reader timed out.`
+          )
+        ).toString('utf8');
+
+        if (markdown.trim()) {
+          // Jina prefixes the article with a `Title:/URL Source:/…` block.
+          // Left in place it lands at the top of the reader and in the
+          // embeddings.
+          const { meta, body } = splitJinaPreamble(markdown);
+          title = meta.title || title;
+          author = meta.author || meta['published by'] || author;
+
+          if (body.trim()) {
+            const compiledHtml = await ParseService.markdownToHtml(body);
+            contentHtml = ParseService.finalizeHtml(compiledHtml);
+            // Same HTML, so tables survive as rows.
+            contentText = htmlToText(contentHtml);
+
+            fetchedViaJina = true;
+            logger.info(
+              '[Extractor] Successfully fetched and parsed markdown from Jina Reader',
+              { charCount: contentText.length }
+            );
+          } else {
+            logger.warn(
+              '[Extractor] Jina Reader returned metadata but no article body'
+            );
+          }
+        }
+      } else {
+        // Nothing here reads the body, and an unread response holds its socket
+        // open. Drop it rather than draining it — the bytes are of no use and
+        // an error page is not size-bounded.
+        response.destroy();
+        logger.warn('[Extractor] Jina Reader returned non-200 status', {
+          status
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener('abort', onAbort);
+    }
+  } catch (err: any) {
+    logger.warn(
+      '[Extractor] Jina Reader API failed, falling back to local crawl',
+      { message: err.message }
+    );
+  }
+
+  // 2. Direct local fetch fallback if Jina failed or returned empty content
+  if (!fetchedViaJina) {
+    logger.info('[Extractor] Fetching raw HTML locally', { url });
+    const hop = await fetchApproved(url);
+    let html = '';
+    try {
+      const status = hop.response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        await readBodyWithLimit(
+          hop.response,
+          MAX_WEB_BODY_BYTES,
+          hop.signal,
+          `Request to ${url} timed out.`
+        ).catch(() => {});
+        throw new Error(`Failed to fetch URL: ${status}`);
+      }
+      html = (
+        await readBodyWithLimit(
+          hop.response,
+          MAX_WEB_BODY_BYTES,
+          hop.signal,
+          `Request to ${url} timed out.`
+        )
+      ).toString('utf8');
+    } finally {
+      hop.cleanup();
+    }
+
+    const dom = new JSDOM(html, { url });
     const { Readability } = await import('@mozilla/readability');
     const article = new Readability(dom.window.document).parse();
 
-    const title =
+    title =
       article?.title ||
       dom.window.document.querySelector('title')?.textContent?.trim() ||
       undefined;
-    const author =
+    author =
       dom.window.document
         .querySelector('meta[name="author"]')
         ?.getAttribute('content')
         ?.trim() || undefined;
 
-    return {
-      content: (article?.textContent || '').trim(),
-      title,
-      author
-    };
-  } finally {
-    // The deadline is only stopped once the body is fully consumed (or the hop
-    // failed above) — never at header receipt.
-    hop.cleanup();
+    const readabilityText = (article?.textContent || '').trim();
+    const readabilityHtml = article?.content || undefined;
+
+    // Extract all raw body text/HTML to ensure we don't miss anything (e.g. dynamic elements, side content)
+    const document = dom.window.document;
+    const toRemove = document.querySelectorAll(
+      'script, style, noscript, svg, iframe, nav, footer, header'
+    );
+    toRemove.forEach((el) => el.remove());
+    const bodyText = (document.body?.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const bodyHtml = document.body?.innerHTML || undefined;
+
+    // If Readability was too aggressive (extracted less than 30% of the body text), use raw body text fallback
+    if (!readabilityText || readabilityText.length < bodyText.length * 0.3) {
+      logger.info(
+        '[Extractor] Readability was too aggressive or empty — using raw body text fallback'
+      );
+      contentText = bodyText;
+      contentHtml = bodyHtml || '';
+    } else {
+      contentText = readabilityText;
+      contentHtml = readabilityHtml || '';
+    }
+
+    if (contentHtml) {
+      // Resolved against the article URL before the HTML is stored.
+      contentHtml = ParseService.finalizeHtml(
+        absolutizeUrls(contentHtml, hop.finalUrl ?? url)
+      );
+      contentText = htmlToText(contentHtml) || contentText;
+    }
   }
+
+  return {
+    content: contentText,
+    html: contentHtml || undefined,
+    title,
+    author
+  };
 };
 
 const extractFromManual = (content: string): string => content.trim();
@@ -551,19 +698,60 @@ const sanitizeText = (text: string): string => {
 // Dispatcher: picks the extractor based on source type and returns sanitized
 // text + metadata. File sources are downloaded from MinIO first.
 export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
+  logger.info('[Extractor] Starting content extraction', {
+    sourceType: input.sourceType,
+    sourceUrl: input.sourceUrl,
+    fileType: input.fileType
+  });
+
   if (input.sourceType === 'Manual') {
-    const content = sanitizeText(extractFromManual(input.content || ''));
-    return { content, characterCount: content.length };
+    logger.debug('[Extractor] Parsing manual text source');
+    const rawContent = extractFromManual(input.content || '');
+    const cleanContent = sanitizeText(rawContent);
+    const paragraphsHtml = cleanContent
+      .split(/\n\s*\n/)
+      .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br/>')}</p>`)
+      .join('');
+
+    logger.debug('[Extractor] Manual text parsed successfully', {
+      charCount: cleanContent.length
+    });
+    return {
+      content: cleanContent,
+      structuredContent: {
+        type: 'document',
+        html: paragraphsHtml
+      },
+      characterCount: cleanContent.length
+    };
   }
 
   if (input.sourceType === 'Web') {
     if (!input.sourceUrl) {
+      logger.error('[Extractor] Missing URL for Web source');
       throw new Error('Web source is missing a URL.');
     }
-    const { content, title, author } = await extractFromWeb(input.sourceUrl);
+    logger.debug('[Extractor] Running readability parser on web page', {
+      url: input.sourceUrl
+    });
+    const { content, html, title, author } = await extractFromWeb(
+      input.sourceUrl
+    );
     const cleanContent = sanitizeText(content);
+    logger.info('[Extractor] Web content parsed successfully', {
+      title,
+      author,
+      charCount: cleanContent.length
+    });
+
     return {
       content: cleanContent,
+      structuredContent: {
+        type: 'document',
+        // Page text with no usable markup; escaped since it is raw content.
+        html:
+          html || `<p>${escapeHtml(cleanContent).replace(/\n/g, '<br/>')}</p>`
+      },
       title,
       author,
       characterCount: cleanContent.length
@@ -571,46 +759,45 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
   }
 
   if (!input.sourceUrl) {
+    logger.error('[Extractor] Missing object key for File source');
     throw new Error('File source is missing an object key.');
   }
 
-  const buffer = await downloadObject(input.sourceUrl);
+  logger.debug('[Extractor] Downloading object from MinIO bucket', {
+    objectKey: input.sourceUrl
+  });
+  const buffer = await downloadObject(normalizeStoredObjectKey(input.sourceUrl));
   const ext = getFileExtension(input.sourceUrl) ?? '';
-  let content = '';
+  const format = getFormatFromMimeAndExt(input.fileType, ext);
 
-  switch (ext) {
-    case 'pdf':
-      content = await extractFromPdf(buffer);
-      break;
-    case 'docx':
-      content = await extractFromDocx(buffer);
-      break;
-    case 'md':
-      content = await extractFromMarkdown(buffer);
-      break;
-    case 'pptx':
-      content = await extractFromPptx(buffer);
-      break;
-    case 'xlsx':
-      content = await extractFromXlsx(buffer);
-      break;
-    case 'epub':
-      content = await extractFromEpub(buffer);
-      break;
-    case 'txt':
-    case 'csv':
-      content = extractFromPlainText(buffer);
-      break;
-    default:
-      throw new Error(`Unsupported file extension for extraction: .${ext}`);
-  }
+  logger.info('[Extractor] Selected file extraction strategy', {
+    resolvedFormat: format,
+    fileSize: buffer.length,
+    originalExtension: ext,
+    fileType: input.fileType
+  });
 
-  if (!content) {
+  // Embedded images go to object storage under this source's prefix; the
+  // stored HTML references them by URL.
+  const parseResult = await ParseService.parse(format, buffer, {
+    sourceId: input.sourceId,
+    saveMedia: createMediaSink(input.sourceId)
+  });
+
+  if (!parseResult.content) {
     throw new Error('No extractable text found in the file.');
   }
 
-  const cleanContent = sanitizeText(content);
-  return { content: cleanContent, characterCount: cleanContent.length };
+  const cleanContent = sanitizeText(parseResult.content);
+  return {
+    content: cleanContent,
+    structuredContent: parseResult.structuredContent,
+    // Only when the file carries its own metadata (EPUB package, front matter).
+    title: parseResult.title,
+    author: parseResult.author,
+    pageCount: parseResult.pageCount,
+    characterCount: cleanContent.length
+  };
 };
 
 export default { extract };

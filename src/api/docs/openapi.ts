@@ -25,6 +25,10 @@ export const openApiDocument = {
       description: 'Research space management'
     },
     {
+      name: 'Passages',
+      description: 'Source text segments and passages operations'
+    },
+    {
       name: 'Sources',
       description: 'Source management within a research space'
     },
@@ -748,6 +752,77 @@ export const openApiDocument = {
           }
         }
       },
+      patch: {
+        tags: ['Sources'],
+        summary: 'Update source metadata or content',
+        description:
+          'Updates the title, author, or content of a source. If the content of a Manual source is updated, it triggers re-extraction and re-ingestion.',
+        operationId: 'updateSource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/UpdateSourceRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Source updated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      },
       delete: {
         tags: ['Sources'],
         summary: 'Delete a source',
@@ -795,6 +870,216 @@ export const openApiDocument = {
             }
           },
           '429': { $ref: '#/components/responses/TooManyRequests' },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/passages/{passageId}': {
+      get: {
+        tags: ['Passages'],
+        summary: 'Get a single passage belonging to a source',
+        operationId: 'getPassage',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'passageId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Passage found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/PassageSuccessResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Passage not found (code: PASSAGE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/preview': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Get preview URL or redirect to preview source',
+        description:
+          'Constructs a public/anonymous preview URL for the source. If requested directly via a web browser (accepting text/html) or with `redirect=true` query parameter, it redirects to the MinIO object URL directly.',
+        operationId: 'getPreviewUrl',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'redirect',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'boolean'
+            },
+            description:
+              'Set to true to force redirecting to the object URL directly instead of returning a JSON response.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Preview URL returned',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      example: 'success'
+                    },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        previewUrl: {
+                          type: 'string',
+                          example:
+                            'http://localhost:9000/folio-sources/sources/a24bc98e/paper.pdf'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '302': {
+            description: 'Redirected to MinIO object storage preview URL'
+          },
+          '400': {
+            description: 'Invalid source type for preview',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/media/{fileName}': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Get an image extracted from a source document',
+        description:
+          'Streams an image that the parser pulled out of an uploaded DOCX or EPUB. The reader HTML in `structuredContent` references these by root-relative URL, so the web client resolves them against the API origin. Unauthenticated by necessity — a browser cannot attach a bearer token to an `<img>` tag — so access is gated on knowing the source UUID and the file name, which is a content hash generated at ingestion time.',
+        operationId: 'getSourceMedia',
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'fileName',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              pattern: '^[0-9a-f]{32}\\.[a-z0-9]{2,4}$'
+            },
+            description:
+              'Content-addressed file name, e.g. `9f2c…a10.png`. Any other shape is rejected.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Image stream',
+            content: {
+              'image/*': {
+                schema: {
+                  type: 'string',
+                  format: 'binary'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Malformed source id or file name',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '404': {
+            description: 'Media not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -3071,6 +3356,39 @@ export const openApiDocument = {
         }
       },
 
+      UpdateSourceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title'],
+        description:
+          '`title` is always required. `content` applies to Manual sources only; the URL and file of Web and File sources are not editable.',
+        properties: {
+          title: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 255,
+            description: 'New source title. Cannot be blank.',
+            example: 'Attention Is All You Need — annotated'
+          },
+          author: {
+            type: 'string',
+            maxLength: 100,
+            nullable: true,
+            description:
+              "New author. Empty string, null, or omitted stores 'Unknown Author'.",
+            example: 'Vaswani et al.'
+          },
+          content: {
+            type: 'string',
+            minLength: 10,
+            maxLength: 50000,
+            description:
+              'New body text for a Manual source. Ignored for other source types. If it differs from the stored content, existing passages are dropped and ingestion is re-enqueued.',
+            example: 'Revised notes: the scaling break appears at 7B.'
+          }
+        }
+      },
+
       Source: {
         type: 'object',
         required: [
@@ -3325,6 +3643,107 @@ export const openApiDocument = {
           }
         }
       },
+
+      Passage: {
+        type: 'object',
+        required: [
+          'id',
+          'sourceId',
+          'content',
+          'tokenCount',
+          'strategyVersion',
+          'locator',
+          'createdAt'
+        ],
+        description:
+          'A single retrievable chunk of a source. The embedding and search vectors are stored but never serialized.',
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'The source this passage was chunked from.'
+          },
+          content: {
+            type: 'string',
+            description: 'The passage text.',
+            example:
+              'The Transformer follows this overall architecture using stacked self-attention...'
+          },
+          tokenCount: {
+            type: 'integer',
+            description: 'Token length of `content` at chunking time.',
+            example: 412
+          },
+          strategyVersion: {
+            type: 'string',
+            description:
+              'Chunking strategy that produced this passage. Passages are re-generated when it changes.',
+            example: 'langchain-semantic-v1'
+          },
+          locator: {
+            type: 'object',
+            nullable: true,
+            description:
+              'Where the passage sits in the parsed source, used to deep-link the reader.',
+            properties: {
+              blockRange: {
+                type: 'array',
+                items: {
+                  type: 'integer'
+                },
+                minItems: 2,
+                maxItems: 2,
+                description: 'Inclusive [start, end] block indices.',
+                example: [12, 15]
+              },
+              headingPath: {
+                type: 'array',
+                items: {
+                  type: 'string'
+                },
+                description: 'Heading trail leading to the passage.',
+                example: ['3. Model Architecture', '3.2 Attention']
+              },
+              firstOrder: {
+                type: 'integer',
+                example: 12
+              },
+              lastOrder: {
+                type: 'integer',
+                example: 15
+              }
+            }
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      PassageSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['passage'],
+            properties: {
+              passage: {
+                $ref: '#/components/schemas/Passage'
+              }
+            }
+          }
+        }
+      },
+
       ListSourcesSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -3400,6 +3819,7 @@ export const openApiDocument = {
               'NOTE_ALREADY_CONVERTED',
               'SOURCE_NOT_FOUND',
               'SOURCE_NOT_FAILED',
+              'PASSAGE_NOT_FOUND',
               'INVALID_FILE_EXTENSION',
               'INVALID_FILE_SIGNATURE',
               'FILE_TOO_LARGE',

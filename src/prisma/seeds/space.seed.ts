@@ -75,10 +75,11 @@ async function main() {
     );
 
     const existing = await prisma.researchSpace.findFirst({
-      where: { ownerId: user.id, name: s.name }
+      where: {
+        ownerId: user.id,
+        name: { equals: s.name, mode: 'insensitive' }
+      }
     });
-
-    const spaceId = randomUUID();
 
     const spaceData = {
       ownerId: user.id,
@@ -89,18 +90,16 @@ async function main() {
       lastOpenedAt: updatedAt
     };
 
-    await prisma.researchSpace.upsert({
-      where: { id: spaceId },
-      update: spaceData,
-      create: {
-        id: spaceId,
-        ...spaceData
-      }
-    });
-
     if (existing) {
+      await prisma.researchSpace.update({
+        where: { id: existing.id },
+        data: spaceData
+      });
       console.log(`  Updated space: "${s.name}"`);
     } else {
+      await prisma.researchSpace.create({
+        data: { id: randomUUID(), ...spaceData }
+      });
       console.log(`  Created space: "${s.name}"`);
     }
   }

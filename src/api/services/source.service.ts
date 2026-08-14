@@ -5,13 +5,23 @@ import { StatusCodes } from 'http-status-codes';
 
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
+import { env } from '~/config/enviroment';
+import { BUCKET_NAME } from '~/config/minio';
 import { ListSourceOptions } from '~/api/types/source';
 import { getContentType } from '~/api/utils/file.util';
-import { deleteObject, uploadFile } from '~/api/utils/minio.util';
+import {
+  deleteObject,
+  deleteObjectsByPrefix,
+  isObjectNotFoundError,
+  normalizeStoredObjectKey,
+  uploadFile
+} from '~/api/utils/minio.util';
+import { mediaPrefix, openMedia } from '~/api/services/media.service';
 import {
   computeFileHash,
   verifyFileSignature
 } from '~/api/utils/signature.util';
+import logger from '~/config/logger';
 import { enqueueIngestion } from '~/queues/ingestion.queue';
 import PassageRepository from '~/prisma/repositories/passage.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
@@ -291,10 +301,18 @@ const remove = async (sourceId: string, userId: string) => {
 
   if (source.sourceType === 'File' && source.sourceUrl) {
     try {
-      await deleteObject(source.sourceUrl);
+      await deleteObject(normalizeStoredObjectKey(source.sourceUrl));
     } catch {
       // Object may already be gone; proceed with record deletion.
     }
+  }
+
+  // Extracted images live under their own prefix and would otherwise be left
+  // behind.
+  try {
+    await deleteObjectsByPrefix(mediaPrefix(sourceId));
+  } catch {
+    // Nothing stored, or storage is unavailable — the record still goes.
   }
 
   await SourceRepository.deleteById(sourceId);
@@ -321,6 +339,116 @@ const retry = async (sourceId: string, userId: string) => {
   return updated;
 };
 
+const update = async (
+  sourceId: string,
+  userId: string,
+  data: { title: string; author?: string | null; content?: string }
+) => {
+  const source = await verifySourceOwnership(sourceId, userId);
+
+  const updatePayload: Record<string, any> = {
+    title: data.title,
+    author: data.author || 'Unknown Author'
+  };
+
+  // If content of a manual text source changed, wipe existing passages and re-enqueue ingestion
+  if (
+    source.sourceType === 'Manual' &&
+    data.content !== undefined &&
+    data.content !== source.content
+  ) {
+    updatePayload.content = data.content;
+    updatePayload.characterCount = data.content.length;
+    updatePayload.processingState = 'added';
+    updatePayload.processingError = null;
+
+    // The passages describe the old text, so they go in the same write that
+    // moves the source back to `added` — and only once that has committed is
+    // the re-ingestion queued.
+    const updated = await SourceRepository.updateClearingPassages(
+      sourceId,
+      updatePayload
+    );
+    await enqueueIngestion(sourceId);
+    return updated;
+  }
+
+  return SourceRepository.update(sourceId, updatePayload);
+};
+
+const getPreviewUrl = async (
+  sourceId: string,
+  userId: string
+): Promise<string | null> => {
+  const source = await verifySourceOwnership(sourceId, userId);
+
+  if (source.sourceType === 'Web') {
+    return source.sourceUrl;
+  }
+
+  if (source.sourceType === 'File' && source.sourceUrl) {
+    const protocol = env.MINIO_USE_SSL === 'true' ? 'https' : 'http';
+    const host =
+      env.MINIO_ENDPOINT === 'minio' ? 'localhost' : env.MINIO_ENDPOINT;
+    return `${protocol}://${host}:${env.MINIO_PORT}/${BUCKET_NAME}/${source.sourceUrl}`;
+  }
+
+  return null;
+};
+
+// No ownership check: <img> tags carry no bearer token, so access is gated on
+// knowing the source UUID and the content hash. The response type is pinned to
+// an image so a stored object can never be served as anything executable.
+const getMedia = async (sourceId: string, fileName: string) => {
+  try {
+    const media = await openMedia(sourceId, fileName);
+    return {
+      stream: media.stream,
+      contentType: media.contentType?.startsWith('image/')
+        ? media.contentType
+        : 'application/octet-stream',
+      contentLength: media.contentLength
+    };
+  } catch (error) {
+    // Only a genuinely absent object is a 404. A refused connection, rejected
+    // credentials or a missing bucket is an outage, and reporting it as "no
+    // such image" would hide it. It is still not re-thrown as-is: this route is
+    // unauthenticated, and the error middleware only redacts when NODE_ENV is
+    // exactly 'production', so a staging deployment would hand the storage
+    // endpoint, bucket and key to anonymous callers. The detail goes to the log
+    // and the client gets the status.
+    if (!isObjectNotFoundError(error)) {
+      logger.error('[Media] Object storage read failed', {
+        sourceId,
+        fileName,
+        name: error instanceof Error ? error.name : typeof error,
+        detail: error instanceof Error ? error.message : String(error),
+        // A refused connection surfaces as an AggregateError whose own message
+        // is empty — the reason (ECONNREFUSED and friends) is only in `errors`.
+        causes:
+          error instanceof AggregateError
+            ? error.errors
+                .slice(0, 3)
+                .map((cause) =>
+                  cause instanceof Error ? cause.message : String(cause)
+                )
+            : undefined
+      });
+      throw new AppError(
+        'Media is temporarily unavailable',
+        StatusCodes.BAD_GATEWAY,
+        ErrorCode.INTERNAL_ERROR
+      );
+    }
+
+    throw new AppError(
+      'Media not found',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SOURCE_NOT_FOUND
+    );
+  }
+};
+
 export default {
   createFile,
   createWeb,
@@ -328,6 +456,9 @@ export default {
   createFromNote,
   list,
   getById,
+  update,
   remove,
-  retry
+  retry,
+  getPreviewUrl,
+  getMedia
 };

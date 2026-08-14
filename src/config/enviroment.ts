@@ -33,6 +33,7 @@ interface EnvInterface {
   MODEL_CHAT_MAX_TOKENS: string;
   MODEL_REQUEST_TIMEOUT_MS: string;
   MODEL_MAX_RETRIES: string;
+  MODEL_EMBEDDING_RPM: string;
   ASK_RETRIEVAL_CANDIDATES: string;
   ASK_RETRIEVAL_TOP_K: string;
   ASK_HISTORY_TURNS: string;
@@ -44,6 +45,9 @@ interface EnvInterface {
   CHUNK_BREAKPOINT_PERCENTILE: string;
   CHUNK_EMBED_BATCH_SIZE: string;
   CHUNK_STRATEGY_VERSION: string;
+  GEMINI_API_KEY: string;
+  OCR_CHARS_PER_PAGE_THRESHOLD: string;
+  OCR_REQUEST_TIMEOUT_MS: string;
 }
 
 const nodeEnv = process.env.NODE_ENV || '';
@@ -101,14 +105,26 @@ export const env: EnvInterface = {
   ASK_RETRIEVAL_TOP_K: process.env.ASK_RETRIEVAL_TOP_K || '6',
   ASK_HISTORY_TURNS: process.env.ASK_HISTORY_TURNS || '6',
   ASK_SUGGESTION_CACHE_TTL_S: process.env.ASK_SUGGESTION_CACHE_TTL_S || '3600',
+  // Texts per minute the embedding provider will accept. Providers that bill
+  // every text inside a batched request separately (Gemini's free tier allows
+  // 100/min) throttle on this rather than on HTTP call count.
+  MODEL_EMBEDDING_RPM: process.env.MODEL_EMBEDDING_RPM || '90',
   CHUNK_PRE_SPLIT_TOKENS: process.env.CHUNK_PRE_SPLIT_TOKENS || '160',
   CHUNK_TARGET_TOKENS: process.env.CHUNK_TARGET_TOKENS || '500',
   CHUNK_MAX_TOKENS: process.env.CHUNK_MAX_TOKENS || '800',
   CHUNK_OVERLAP_TOKENS: process.env.CHUNK_OVERLAP_TOKENS || '80',
   CHUNK_BREAKPOINT_PERCENTILE: process.env.CHUNK_BREAKPOINT_PERCENTILE || '90',
-  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '64',
+  // Kept well under MODEL_EMBEDDING_RPM so batches pace smoothly.
+  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '30',
   CHUNK_STRATEGY_VERSION:
-    process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1'
+    process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  OCR_CHARS_PER_PAGE_THRESHOLD:
+    process.env.OCR_CHARS_PER_PAGE_THRESHOLD || '50',
+  // OCR sends a whole PDF and waits for every page to come back, so it needs a
+  // far longer deadline than a chat completion. Kept separate from
+  // MODEL_REQUEST_TIMEOUT_MS for that reason.
+  OCR_REQUEST_TIMEOUT_MS: process.env.OCR_REQUEST_TIMEOUT_MS || '300000'
 };
 
 const missing = [
