@@ -27,6 +27,8 @@ export type AnswerCitation = {
   sourceTitle: string;
   sourceType: SourceType;
   sourceAuthor: string | null;
+  /** MIME type of an uploaded file, so the client can badge it `DOCX`, `PDF`, … */
+  sourceFileType: string | null;
   passageId: string;
   snippet: string;
   locationLabel: string | null;

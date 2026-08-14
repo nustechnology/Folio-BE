@@ -62,6 +62,7 @@ const toSavedCitation = ({
   sourceTitle: citation.source.title,
   sourceType: citation.source.sourceType,
   sourceAuthor: citation.source.author,
+  sourceFileType: citation.source.fileType,
   passageId: citation.passageId,
   snippet: citation.supportingPassage,
   locationLabel: RetrievalService.toLocationLabel(

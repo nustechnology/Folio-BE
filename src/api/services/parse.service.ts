@@ -866,10 +866,14 @@ const extractFromEpub = async (
 // Tailwind classes cover the app's theme; the duplicated inline styles survive
 // the `prose` reset and contexts that don't load the stylesheet.
 const ELEMENT_STYLES: Record<string, { className: string; style?: string }> = {
+  // `width: max-content` rather than `100%`: the table sits inside a
+  // horizontally scrolling wrapper, and a table pinned to the wrapper's width
+  // can never overflow it, so the columns would squeeze instead of scrolling.
+  // `min-width: 100%` keeps narrow tables filling the column as before.
   table: {
-    className: 'w-full border-collapse border border-muted/50 my-4',
+    className: 'w-max min-w-full border-collapse border border-muted/50 my-4',
     style:
-      'width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px;'
+      'width: max-content; min-width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px;'
   },
   thead: { className: 'bg-muted/10' },
   tr: { className: 'even:bg-muted/5' },
@@ -954,6 +958,22 @@ const promoteTableHeader = (table: Element, document: Document): void => {
   table.insertBefore(head, table.firstChild);
 };
 
+// A wide table has to scroll without dragging the page with it. The scroll must
+// live on a wrapper: putting `display: block` on the table itself would disable
+// table layout, so the columns would shrink-wrap instead of sharing the width.
+// Pairs with `ELEMENT_STYLES.table` — the wrapper only ever scrolls because the
+// table inside it is `width: max-content`.
+const wrapTableInScroller = (table: Element, document: Document): void => {
+  if (table.parentElement?.classList.contains('table-scroll')) {
+    return;
+  }
+  const scroller = document.createElement('div');
+  scroller.setAttribute('class', 'table-scroll');
+  scroller.setAttribute('style', 'max-width: 100%; overflow-x: auto;');
+  table.replaceWith(scroller);
+  scroller.appendChild(table);
+};
+
 // Word writes `<td><p>text</p></td>`, whose paragraph margins pad the cell out
 // of shape.
 const unwrapCellParagraphs = (document: Document): void => {
@@ -981,6 +1001,7 @@ const finalizeHtml = (html: string): string => {
 
   for (const table of Array.from(document.querySelectorAll('table'))) {
     promoteTableHeader(table, document);
+    wrapTableInScroller(table, document);
   }
   unwrapCellParagraphs(document);
 

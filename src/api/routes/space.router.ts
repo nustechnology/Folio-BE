@@ -42,6 +42,14 @@ router.get(
   asyncHandler(SpaceController.get)
 );
 
+// Removes the space and everything filed under it, including uploaded files.
+router.delete(
+  '/:spaceId',
+  auth,
+  validateParams(spaceIdParamSchema),
+  asyncHandler(SpaceController.remove)
+);
+
 router.use('/:spaceId/notes', NoteRouter);
 router.use('/:spaceId/notebook', NotebookRouter);
 router.use('/:spaceId/ask', AskRouter);

@@ -40,8 +40,16 @@ const create = async (req: Request, res: Response) => {
     .json({ status: 'success', data: { space } });
 };
 
+const remove = async (req: Request, res: Response) => {
+  const { spaceId } = req.params as { spaceId: string };
+  const result = await SpaceService.remove(req.userId!, spaceId);
+
+  return successResponse(res, result);
+};
+
 export default {
   list,
   get,
-  create
+  create,
+  remove
 };

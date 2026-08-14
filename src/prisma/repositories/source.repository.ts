@@ -92,6 +92,15 @@ const deleteById = async (id: string) => {
   return prisma.source.delete({ where: { id } });
 };
 
+// Only what deleting a space needs to clean up object storage — the row itself
+// goes with the space's own cascade, so the text columns are never loaded.
+const findStorageRefsBySpaceId = async (spaceId: string) => {
+  return prisma.source.findMany({
+    where: { researchSpaceId: spaceId },
+    select: { id: true, sourceType: true, sourceUrl: true }
+  });
+};
+
 const countBySpaceId = async (spaceId: string) => {
   return prisma.source.count({ where: { researchSpaceId: spaceId } });
 };
@@ -157,6 +166,7 @@ export default {
   update,
   updateClearingPassages,
   deleteById,
+  findStorageRefsBySpaceId,
   countBySpaceId,
   findByOriginalNoteId,
   findManyByOwnerId

@@ -124,10 +124,62 @@ const create = async (data: {
   }
 };
 
+// The cascade reaches `Passage`, which holds one embedding and one tsvector per
+// chunk — a space of large PDFs is tens of thousands of wide rows, well past the
+// 5s Prisma allows an interactive transaction by default.
+const DELETE_TRANSACTION_TIMEOUT_MS = 60_000;
+const DELETE_TRANSACTION_MAX_WAIT_MS = 10_000;
+
+/**
+ * Deletes a space and everything filed under it in one transaction, so a
+ * failure part-way cannot leave a half-emptied space behind. Resolves `false`
+ * when no space matched — an unknown id, or one owned by somebody else.
+ *
+ * The children are removed explicitly because none of the space relations
+ * declare `onDelete: Cascade` — Postgres would reject the parent row. Order
+ * matters twice over: sources are dropped first since a source promoted from a
+ * note points back at it (`Source.originalNoteId`), and everything hanging off
+ * a source (`Passage`, `Citation` → `NoteCitation`) does cascade, so those go
+ * with it.
+ */
+const deleteByIdAndOwner = async (id: string, ownerId: string) => {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.source.deleteMany({ where: { researchSpaceId: id } });
+      // `NoteCitation.note` declares no referential action, so it restricts.
+      // The source cascade above clears these in practice — every citation a
+      // note holds is drawn from a source in the same space — but that is an
+      // invariant of how answers are saved, not one the schema enforces, and a
+      // single survivor would fail the notes below.
+      await tx.noteCitation.deleteMany({
+        where: { note: { researchSpaceId: id } }
+      });
+      await tx.note.deleteMany({ where: { researchSpaceId: id } });
+      await tx.conversation.deleteMany({ where: { researchSpaceId: id } });
+      await tx.notebook.deleteMany({ where: { researchSpaceId: id } });
+
+      // Counted and owner-scoped rather than `delete`: a row already taken by a
+      // concurrent delete would throw `P2025`, which nothing maps to a
+      // response, and the predicate closes the window between the caller's
+      // ownership check and this row going. A zero count rolls the children
+      // back with it.
+      const { count } = await tx.researchSpace.deleteMany({
+        where: { id, ownerId }
+      });
+      return count > 0;
+    },
+    {
+      timeout: DELETE_TRANSACTION_TIMEOUT_MS,
+      maxWait: DELETE_TRANSACTION_MAX_WAIT_MS
+    }
+  );
+};
+
 export default {
   findManyByOwner,
   findByIdAndOwner,
   findDetailByIdAndOwner,
   findByNameAndOwner,
-  create
+  create,
+  deleteByIdAndOwner
 };

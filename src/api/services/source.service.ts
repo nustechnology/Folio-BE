@@ -8,6 +8,7 @@ import { ErrorCode } from '~/api/errors/error-codes';
 import { env } from '~/config/enviroment';
 import { BUCKET_NAME } from '~/config/minio';
 import { ListSourceOptions } from '~/api/types/source';
+import { SourceType } from '~/generated/prisma/client';
 import { getContentType } from '~/api/utils/file.util';
 import {
   deleteObject,
@@ -296,9 +297,17 @@ const getById = async (sourceId: string, userId: string) => {
   return { ...source, passages };
 };
 
-const remove = async (sourceId: string, userId: string) => {
-  const source = await verifySourceOwnership(sourceId, userId);
-
+/**
+ * Everything a source owns in object storage. Best-effort by design: storage
+ * failures must not block the row from going, or a source the user deleted
+ * would keep coming back. Shared with the space delete, which drops every
+ * source at once.
+ */
+const purgeStoredObjects = async (source: {
+  id: string;
+  sourceType: SourceType;
+  sourceUrl: string | null;
+}) => {
   if (source.sourceType === 'File' && source.sourceUrl) {
     try {
       await deleteObject(normalizeStoredObjectKey(source.sourceUrl));
@@ -310,10 +319,16 @@ const remove = async (sourceId: string, userId: string) => {
   // Extracted images live under their own prefix and would otherwise be left
   // behind.
   try {
-    await deleteObjectsByPrefix(mediaPrefix(sourceId));
+    await deleteObjectsByPrefix(mediaPrefix(source.id));
   } catch {
     // Nothing stored, or storage is unavailable — the record still goes.
   }
+};
+
+const remove = async (sourceId: string, userId: string) => {
+  const source = await verifySourceOwnership(sourceId, userId);
+
+  await purgeStoredObjects(source);
 
   await SourceRepository.deleteById(sourceId);
   return { success: true };
@@ -458,6 +473,7 @@ export default {
   getById,
   update,
   remove,
+  purgeStoredObjects,
   retry,
   getPreviewUrl,
   getMedia

@@ -423,6 +423,38 @@ export const openApiDocument = {
           '404': { $ref: '#/components/responses/SpaceNotFound' },
           '500': { $ref: '#/components/responses/InternalError' }
         }
+      },
+      delete: {
+        tags: ['Spaces'],
+        summary: 'Delete a research space',
+        description:
+          'Permanently deletes the space together with every source, note, conversation and notebook inside it, and removes the uploaded files and extracted images from object storage. Not reversible.',
+        operationId: 'deleteSpace',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
+        responses: {
+          '200': {
+            description: 'Space deleted',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/DeleteSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error (space id is not a UUID)',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/SpaceNotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
       }
     },
     '/api/v1/spaces/{spaceId}/notebook': {
@@ -2795,6 +2827,7 @@ export const openApiDocument = {
           'sourceTitle',
           'sourceType',
           'sourceAuthor',
+          'sourceFileType',
           'passageId',
           'snippet',
           'locationLabel',
@@ -2823,6 +2856,14 @@ export const openApiDocument = {
           sourceAuthor: {
             type: 'string',
             nullable: true
+          },
+          sourceFileType: {
+            type: 'string',
+            nullable: true,
+            description:
+              'MIME type of the uploaded file, so the client can badge the citation with the real format. `null` for web and manual sources.',
+            example:
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
           },
           passageId: {
             type: 'string',
@@ -2869,6 +2910,7 @@ export const openApiDocument = {
           'sourceTitle',
           'sourceType',
           'sourceAuthor',
+          'sourceFileType',
           'passageId',
           'snippet',
           'locationLabel',
@@ -2897,6 +2939,14 @@ export const openApiDocument = {
           sourceAuthor: {
             type: 'string',
             nullable: true
+          },
+          sourceFileType: {
+            type: 'string',
+            nullable: true,
+            description:
+              'MIME type of the uploaded file, so the client can badge the citation with the real format. `null` for web and manual sources.',
+            example:
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
           },
           passageId: {
             type: 'string',
@@ -3761,6 +3811,26 @@ export const openApiDocument = {
                 items: {
                   $ref: '#/components/schemas/Source'
                 }
+              }
+            }
+          }
+        }
+      },
+      DeleteSpaceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['success'],
+            properties: {
+              success: {
+                type: 'boolean',
+                enum: [true]
               }
             }
           }
