@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1
+#
+# Production image for Folio-BE (VPS deploy). New file — `Dockerfile` (dev) and
+# `Dockerfile.prod` are left untouched.
+#
+# Differences from Dockerfile.prod:
+#   - multi-stage: deps -> build -> runtime, so build-only layers are dropped
+#   - runs as the non-root `node` user
+#   - no migration in CMD: `docker-compose.deploy.yml` runs `migrate deploy`
+#     once in a dedicated one-shot service, otherwise api and worker would race
+#     each other applying the same migrations on every restart
+#   - one image serves api, worker and migrate; only the command differs
+#
+# Yarn: Folio-BE's yarn.lock is Yarn Classic v1 (`# yarn lockfile v1`), which is
+# what the node images ship, so no corepack dance here (Folio-Web is Berry and
+# does need it).
+
+# --- deps: install with the lockfile frozen ---------------------------------
+FROM node:22-alpine AS deps
+WORKDIR /app
+
+# Prisma's driver adapter (@prisma/adapter-pg) is pure JS, but openssl is still
+# needed by the CLI during `prisma generate`.
+RUN apk add --no-cache openssl
+
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --network-timeout 600000
+
+# --- build: prisma generate + tsc + tsc-alias -------------------------------
+FROM deps AS build
+WORKDIR /app
+
+COPY . .
+
+# `prisma.config.ts` reads env('DATABASE_URL') at load time, so `yarn build`
+# (which starts with `prisma generate`) needs *a* URL — never used, nothing
+# connects during generate.
+ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
+ENV DATABASE_URL=$DATABASE_URL
+
+# tsconfig includes `src`, and the Prisma 7 `prisma-client` generator emits
+# TypeScript into src/generated/prisma — so dist/generated/prisma is produced by
+# tsc itself. No manual copy needed (unlike the reference API Dockerfile, which
+# targets the old binary generator).
+RUN yarn build
+
+# --- runtime ----------------------------------------------------------------
+FROM node:22-alpine AS runtime
+WORKDIR /app
+
+RUN apk add --no-cache openssl
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+# node_modules is copied whole rather than pruned: the `migrate` service runs
+# `prisma migrate deploy` from the same image and the Prisma CLI is a
+# devDependency. Pruning it would need a second install layer for marginal gain.
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
+# Schema + migrations for `migrate deploy`; seeds for the optional `yarn db:seed`.
+COPY --from=build --chown=node:node /app/src/prisma ./src/prisma
+
+USER node
+
+EXPOSE 4000
+
+# Multer writes uploads here before they are streamed into MinIO.
+ENV MULTER_TEMP_DIR=/tmp
+
+CMD ["node", "dist/index.js"]
