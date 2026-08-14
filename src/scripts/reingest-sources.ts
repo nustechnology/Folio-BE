@@ -195,9 +195,11 @@ const run = async (): Promise<number> => {
     return 0;
   }
 
-  if (!options.reextract) {
-    await assertSchemaMatchesModel();
-  }
+  // Both modes end in an INSERT of vectors of this width — reembed does it here,
+  // reextract does it later in the worker. Checking up front in both cases turns
+  // a stale column into one clear error before anything is touched, instead of
+  // every queued source failing on a raw Postgres type error mid-run.
+  await assertSchemaMatchesModel();
 
   let done = 0;
   let skipped = 0;
@@ -216,10 +218,23 @@ const run = async (): Promise<number> => {
         await enqueueIngestion(source.id);
         done++;
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // The state has already been moved to `added` by this point, so a
+        // failure here — the queue being unreachable, typically — would strand
+        // the source: shown as pending forever, with no job in existence to
+        // advance it. Recording it as failed is what makes it visible and
+        // retryable. Both writes are best-effort; whatever broke the enqueue
+        // has usually taken Redis with it.
+        await SourceRepository.update(source.id, {
+          processingState: 'failed',
+          processingError: message
+        }).catch(() => {});
+        await publishStatus(source.id, 'failed', message).catch(() => {});
+
         failures.push({
           id: source.id,
           title: source.title,
-          error: error instanceof Error ? error.message : String(error)
+          error: message
         });
       }
     }

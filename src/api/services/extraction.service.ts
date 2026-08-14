@@ -8,7 +8,10 @@ import { JSDOM } from 'jsdom';
 import { createMediaSink } from '~/api/services/media.service';
 import { getFileExtension } from '~/api/utils/file.util';
 import { htmlToText } from '~/api/utils/html-to-text.util';
-import { downloadObject } from '~/api/utils/minio.util';
+import {
+  downloadObject,
+  normalizeStoredObjectKey
+} from '~/api/utils/minio.util';
 import { escapeHtml } from '~/api/utils/source-html.util';
 import logger from '~/config/logger';
 import type { SourceType } from '~/generated/prisma/enums';
@@ -508,6 +511,13 @@ const extractFromWeb = async (
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+    // The deadline has to tear the socket down itself: before headers arrive
+    // nothing is reading `signal`, so an abort that only flips the flag would
+    // leave the promise below pending until the OS gave up. Same wiring as
+    // `fetchHop`.
+    let jinaRequest: http.ClientRequest | undefined;
+    const onAbort = () => jinaRequest?.destroy(new Error('timed out'));
+    controller.signal.addEventListener('abort', onAbort);
 
     const response = await new Promise<http.IncomingMessage>(
       (resolve, reject) => {
@@ -528,6 +538,7 @@ const extractFromWeb = async (
           },
           (res) => resolve(res)
         );
+        jinaRequest = req;
         req.on('error', reject);
         req.end();
       }
@@ -571,12 +582,17 @@ const extractFromWeb = async (
           }
         }
       } else {
+        // Nothing here reads the body, and an unread response holds its socket
+        // open. Drop it rather than draining it — the bytes are of no use and
+        // an error page is not size-bounded.
+        response.destroy();
         logger.warn('[Extractor] Jina Reader returned non-200 status', {
           status
         });
       }
     } finally {
       clearTimeout(timer);
+      controller.signal.removeEventListener('abort', onAbort);
     }
   } catch (err: any) {
     logger.warn(
@@ -750,7 +766,7 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
   logger.debug('[Extractor] Downloading object from MinIO bucket', {
     objectKey: input.sourceUrl
   });
-  const buffer = await downloadObject(input.sourceUrl);
+  const buffer = await downloadObject(normalizeStoredObjectKey(input.sourceUrl));
   const ext = getFileExtension(input.sourceUrl) ?? '';
   const format = getFormatFromMimeAndExt(input.fileType, ext);
 

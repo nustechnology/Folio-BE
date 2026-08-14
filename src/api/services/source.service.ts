@@ -12,6 +12,8 @@ import { getContentType } from '~/api/utils/file.util';
 import {
   deleteObject,
   deleteObjectsByPrefix,
+  isObjectNotFoundError,
+  normalizeStoredObjectKey,
   uploadFile
 } from '~/api/utils/minio.util';
 import { mediaPrefix, openMedia } from '~/api/services/media.service';
@@ -19,6 +21,7 @@ import {
   computeFileHash,
   verifyFileSignature
 } from '~/api/utils/signature.util';
+import logger from '~/config/logger';
 import { enqueueIngestion } from '~/queues/ingestion.queue';
 import PassageRepository from '~/prisma/repositories/passage.repository';
 import SourceRepository from '~/prisma/repositories/source.repository';
@@ -298,7 +301,7 @@ const remove = async (sourceId: string, userId: string) => {
 
   if (source.sourceType === 'File' && source.sourceUrl) {
     try {
-      await deleteObject(source.sourceUrl);
+      await deleteObject(normalizeStoredObjectKey(source.sourceUrl));
     } catch {
       // Object may already be gone; proceed with record deletion.
     }
@@ -359,10 +362,13 @@ const update = async (
     updatePayload.processingState = 'added';
     updatePayload.processingError = null;
 
-    // Delete existing passages since the content has changed
-    await PassageRepository.deleteBySourceId(sourceId);
-
-    const updated = await SourceRepository.update(sourceId, updatePayload);
+    // The passages describe the old text, so they go in the same write that
+    // moves the source back to `added` — and only once that has committed is
+    // the re-ingestion queued.
+    const updated = await SourceRepository.updateClearingPassages(
+      sourceId,
+      updatePayload
+    );
     await enqueueIngestion(sourceId);
     return updated;
   }
@@ -403,7 +409,38 @@ const getMedia = async (sourceId: string, fileName: string) => {
         : 'application/octet-stream',
       contentLength: media.contentLength
     };
-  } catch {
+  } catch (error) {
+    // Only a genuinely absent object is a 404. A refused connection, rejected
+    // credentials or a missing bucket is an outage, and reporting it as "no
+    // such image" would hide it. It is still not re-thrown as-is: this route is
+    // unauthenticated, and the error middleware only redacts when NODE_ENV is
+    // exactly 'production', so a staging deployment would hand the storage
+    // endpoint, bucket and key to anonymous callers. The detail goes to the log
+    // and the client gets the status.
+    if (!isObjectNotFoundError(error)) {
+      logger.error('[Media] Object storage read failed', {
+        sourceId,
+        fileName,
+        name: error instanceof Error ? error.name : typeof error,
+        detail: error instanceof Error ? error.message : String(error),
+        // A refused connection surfaces as an AggregateError whose own message
+        // is empty — the reason (ECONNREFUSED and friends) is only in `errors`.
+        causes:
+          error instanceof AggregateError
+            ? error.errors
+                .slice(0, 3)
+                .map((cause) =>
+                  cause instanceof Error ? cause.message : String(cause)
+                )
+            : undefined
+      });
+      throw new AppError(
+        'Media is temporarily unavailable',
+        StatusCodes.BAD_GATEWAY,
+        ErrorCode.INTERNAL_ERROR
+      );
+    }
+
     throw new AppError(
       'Media not found',
       StatusCodes.NOT_FOUND,

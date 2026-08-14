@@ -73,6 +73,21 @@ const update = async (id: string, data: Prisma.SourceUpdateInput) => {
   });
 };
 
+// Editing a manual source's text invalidates every passage cut from the old
+// text. The two writes have to land together: dropping the passages first and
+// then failing to write the new state leaves a source that still reports itself
+// ready while having nothing left to retrieve, and nothing queued to rebuild it.
+const updateClearingPassages = async (
+  id: string,
+  data: Prisma.SourceUpdateInput
+) => {
+  const [, updated] = await prisma.$transaction([
+    prisma.passage.deleteMany({ where: { sourceId: id } }),
+    prisma.source.update({ where: { id }, data })
+  ]);
+  return updated;
+};
+
 const deleteById = async (id: string) => {
   return prisma.source.delete({ where: { id } });
 };
@@ -140,6 +155,7 @@ export default {
   findBySpaceId,
   findManyForReindex,
   update,
+  updateClearingPassages,
   deleteById,
   countBySpaceId,
   findByOriginalNoteId,

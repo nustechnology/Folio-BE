@@ -88,6 +88,47 @@ export const splitFrontMatter = (
   return { body: text.slice(match[0].length), meta };
 };
 
+// XML text content arrives escaped, so a cell reading `Ben & Jerry's <3` is
+// stored as `Ben &amp; Jerry&apos;s &lt;3`. Handles the five predefined
+// entities plus decimal and hex character references, which is the whole set
+// XML defines without a DTD. `&amp;` is unwrapped last so that an escaped
+// entity (`&amp;lt;`) decodes to the literal `&lt;` rather than to `<`.
+const decodeXmlEntities = (text: string): string => {
+  const fromCodePoint = (code: number, raw: string) =>
+    Number.isInteger(code) && code >= 0 && code <= 0x10ffff
+      ? String.fromCodePoint(code)
+      : raw; // out of range — leave it as written rather than throwing
+
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (raw, hex) =>
+      fromCodePoint(parseInt(hex, 16), raw)
+    )
+    .replace(/&#(\d+);/g, (raw, dec) => fromCodePoint(Number(dec), raw))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+};
+
+// Reads the text of one spreadsheet string, given the inside of an <si> (a
+// shared string) or an <is> (a string stored inline in the cell). Both hold the
+// same thing: either a single <t>, or — when the string carries mixed
+// formatting — one <r> run per format, each with its own <t>, which have to be
+// concatenated back into a single value.
+const readXmlTextRuns = (fragment: string): string => {
+  // Phonetic guides (furigana) sit in their own <rPh> runs alongside the real
+  // text; they are an annotation, not part of the value.
+  const body = fragment.replace(/<rPh\b[\s\S]*?<\/rPh>/gi, '');
+  let text = '';
+  // Self-closing first: tried second, the open-tag branch matches `<t/>` as an
+  // opening tag and runs on to the next element's `</t>`.
+  for (const run of body.matchAll(/<t\b[^>]*\/>|<t\b[^>]*>([\s\S]*?)<\/t>/gi)) {
+    text += run[1] ?? '';
+  }
+  return decodeXmlEntities(text);
+};
+
 // Rough tag stripper for XML-based containers (PPTX slides, XLSX strings,
 // EPUB documents) — good enough to pull readable text without a full HTML parser.
 const stripTags = (xml: string): string => {
@@ -113,10 +154,15 @@ const parseXlsxSheets = async (
   const sharedStringsFile = zip.file('xl/sharedStrings.xml');
   if (sharedStringsFile) {
     const xml = await sharedStringsFile.async('string');
-    const tMatches = xml.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [];
-    for (const match of tMatches) {
-      const text = match.replace(/<[^>]+>/g, '');
-      sharedStrings.push(text);
+    // One entry per <si>, not per <t> — cells address this array by position,
+    // so a multi-run string collected as several entries shifts every string
+    // after it. The self-closing form has to be the first alternative: tried
+    // second, the open-tag branch matches `<si/>` as an opening tag and runs on
+    // to the next element's `</si>`, swallowing two entries into one.
+    const siMatches = xml.matchAll(/<si\b[^>]*\/>|<si\b[^>]*>([\s\S]*?)<\/si>/gi);
+    for (const si of siMatches) {
+      // An empty <si/> still occupies an index, so it is pushed like any other.
+      sharedStrings.push(readXmlTextRuns(si[1] ?? ''));
     }
   }
 
@@ -155,24 +201,30 @@ const parseXlsxSheets = async (
     const rowsMap: Record<number, Record<string, string>> = {};
     const colLetters = new Set<string>();
 
-    // Each cell in a sheet is represented by a <c> tag.
-    // Permissive match for cells: support both normal and self-closing tags.
+    // Each cell in a sheet is represented by a <c> tag. Both forms have to come
+    // out of one scan, in document order: a styled-but-empty cell is written
+    // self-closing, and trying the open-tag pattern first would match `<c r="A1"/>`
+    // as an opening tag and consume everything up to the *next* `</c>`, handing
+    // the following cell's value to this cell's column.
     const cMatches =
-      xml.match(/<c\s+[^>]+>([\s\S]*?)<\/c>/gi) ||
-      xml.match(/<c\s+[^>]+\/>/gi) ||
-      [];
+      xml.match(/<c\b[^>]*\/>|<c\b[^>]*>([\s\S]*?)<\/c>/gi) || [];
     for (const cMatch of cMatches) {
+      // Read the cell's attributes off its opening tag only. A nested <f>
+      // carries a `t` of its own ("shared", "array"), which a search over the
+      // whole cell would pick up as if it were the cell's type.
+      const openTag = cMatch.match(/^<c\b[^>]*>/i)?.[0] ?? cMatch;
+
       // Cell reference e.g. r="A1" maps to column "A", row "1"
       const rMatch =
-        cMatch.match(/r="([A-Z]+)(\d+)"/i) ||
-        cMatch.match(/r='([A-Z]+)(\d+)'/i);
+        openTag.match(/r="([A-Z]+)(\d+)"/i) ||
+        openTag.match(/r='([A-Z]+)(\d+)'/i);
       if (!rMatch) continue;
       const col = rMatch[1].toUpperCase();
       const row = Number(rMatch[2]);
 
       // t="s" indicates the cell's value is stored in sharedStrings.xml (shared string index).
       const tMatch =
-        cMatch.match(/t="([^"]+)"/i) || cMatch.match(/t='([^']+)'/i);
+        openTag.match(/t="([^"]+)"/i) || openTag.match(/t='([^']+)'/i);
       const isSharedString = tMatch && tMatch[1] === 's';
 
       // <v> is the value tag containing either the raw number or the sharedStrings index.
@@ -184,7 +236,17 @@ const parseXlsxSheets = async (
           const idx = Number(valStr);
           value = sharedStrings[idx] || '';
         } else {
-          value = valStr;
+          // Numbers pass through untouched; string results of formulas are
+          // escaped the same way shared strings are.
+          value = decodeXmlEntities(valStr);
+        }
+      } else {
+        // t="inlineStr": the string is not pooled, it sits in the cell inside
+        // an <is> with the same run structure as a shared string. There is no
+        // <v> to read in that case, so without this the cell reads as empty.
+        const isMatch = cMatch.match(/<is\b[^>]*>([\s\S]*?)<\/is>/i);
+        if (isMatch) {
+          value = readXmlTextRuns(isMatch[1]);
         }
       }
 
@@ -309,12 +371,18 @@ const parsePptxSlides = async (
 // PDF: pdfjs-dist is used to read layout coordinate entries and reconstruct lines.
 // Text is read page-by-page with a `[page N]` marker preserved so
 // the chunking pipeline can attach page-level citation locators later.
-const extractFromPdf = async (
-  buffer: Buffer
-): Promise<{ text: string; tablePages: number[] }> => {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+type PdfDocument = Awaited<
+  ReturnType<
+    (typeof import('pdfjs-dist/legacy/build/pdf.mjs'))['getDocument']
+  >['promise']
+>;
 
+// Reads every page of an already-open document. The page count goes out with
+// the text so callers don't have to parse the same bytes a second time just to
+// learn how many pages there were.
+const readPdfPages = async (
+  doc: PdfDocument
+): Promise<{ text: string; tablePages: number[]; numPages: number }> => {
   let text = '';
   const tablePages: number[] = [];
 
@@ -470,7 +538,20 @@ const extractFromPdf = async (
     text += `[page ${i}]\n${pageText}\n\n`;
   }
 
-  return { text: text.trim(), tablePages };
+  return { text: text.trim(), tablePages, numPages: doc.numPages };
+};
+
+const extractFromPdf = async (buffer: Buffer) => {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  // `getDocument` spins up a worker that outlives the returned document, and
+  // the document proxy has no teardown of its own — releasing it means holding
+  // the loading task and destroying that, whether or not extraction succeeded.
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer) });
+  try {
+    return await readPdfPages(await loadingTask.promise);
+  } finally {
+    await loadingTask.destroy();
+  }
 };
 
 // Styles mammoth's default map discards, which would otherwise arrive as
@@ -1002,12 +1083,12 @@ const convertTabsToMarkdownTables = (text: string): string => {
 // Parses a PDF file, extracting text and wrapping each page's content inside an HTML div
 // that preserves page boundaries for browser rendering.
 const parsePdf = async (buffer: Buffer) => {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
-  const numPages = doc.numPages;
-
   // 1. Get raw local coordinate extraction and layout-detected table pages
-  const { text: contentText, tablePages } = await extractFromPdf(buffer);
+  const {
+    text: contentText,
+    tablePages,
+    numPages
+  } = await extractFromPdf(buffer);
   let content = contentText;
   let isOcr = false;
   let ocrPageMap: Record<number, string> = {};

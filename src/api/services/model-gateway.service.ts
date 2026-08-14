@@ -33,9 +33,9 @@ const client = new OpenAI({
 // allow a burst and refill inside the same 60s, which is what such providers
 // reject. Per-process — two workers on one key each get their own window.
 //
-// Opt-in: the default embedding model is self-hosted and has no quota, and a
-// standing cap would only throttle local ingestion. Set MODEL_EMBEDDING_RPM
-// when pointing at a metered provider.
+// Defaults to 90/min when MODEL_EMBEDDING_RPM is blank or absent. Set it to 0
+// when pointing at a self-hosted model with no quota, where a standing cap
+// would only throttle local ingestion.
 const RATE_LIMIT_RPM = Math.max(0, Number(env.MODEL_EMBEDDING_RPM) || 0);
 const RATE_LIMIT_WINDOW_MS = 60_000;
 let spent: { at: number; cost: number }[] = [];
@@ -45,7 +45,7 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 const consumeRateLimit = async (count: number): Promise<void> => {
-  // Unset means no metering at all — not even the serializing gate below, which
+  // Zero means no metering at all — not even the serializing gate below, which
   // would otherwise queue every batch behind the last for no reason.
   if (RATE_LIMIT_RPM === 0) {
     return;

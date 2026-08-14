@@ -47,6 +47,7 @@ interface EnvInterface {
   CHUNK_STRATEGY_VERSION: string;
   GEMINI_API_KEY: string;
   OCR_CHARS_PER_PAGE_THRESHOLD: string;
+  OCR_REQUEST_TIMEOUT_MS: string;
 }
 
 const nodeEnv = process.env.NODE_ENV || '';
@@ -118,7 +119,12 @@ export const env: EnvInterface = {
   CHUNK_STRATEGY_VERSION:
     process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  OCR_CHARS_PER_PAGE_THRESHOLD: process.env.OCR_CHARS_PER_PAGE_THRESHOLD || '50'
+  OCR_CHARS_PER_PAGE_THRESHOLD:
+    process.env.OCR_CHARS_PER_PAGE_THRESHOLD || '50',
+  // OCR sends a whole PDF and waits for every page to come back, so it needs a
+  // far longer deadline than a chat completion. Kept separate from
+  // MODEL_REQUEST_TIMEOUT_MS for that reason.
+  OCR_REQUEST_TIMEOUT_MS: process.env.OCR_REQUEST_TIMEOUT_MS || '300000'
 };
 
 const missing = [

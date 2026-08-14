@@ -3356,6 +3356,39 @@ export const openApiDocument = {
         }
       },
 
+      UpdateSourceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title'],
+        description:
+          '`title` is always required. `content` applies to Manual sources only; the URL and file of Web and File sources are not editable.',
+        properties: {
+          title: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 255,
+            description: 'New source title. Cannot be blank.',
+            example: 'Attention Is All You Need — annotated'
+          },
+          author: {
+            type: 'string',
+            maxLength: 100,
+            nullable: true,
+            description:
+              "New author. Empty string, null, or omitted stores 'Unknown Author'.",
+            example: 'Vaswani et al.'
+          },
+          content: {
+            type: 'string',
+            minLength: 10,
+            maxLength: 50000,
+            description:
+              'New body text for a Manual source. Ignored for other source types. If it differs from the stored content, existing passages are dropped and ingestion is re-enqueued.',
+            example: 'Revised notes: the scaling break appears at 7B.'
+          }
+        }
+      },
+
       Source: {
         type: 'object',
         required: [
@@ -3610,6 +3643,107 @@ export const openApiDocument = {
           }
         }
       },
+
+      Passage: {
+        type: 'object',
+        required: [
+          'id',
+          'sourceId',
+          'content',
+          'tokenCount',
+          'strategyVersion',
+          'locator',
+          'createdAt'
+        ],
+        description:
+          'A single retrievable chunk of a source. The embedding and search vectors are stored but never serialized.',
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'The source this passage was chunked from.'
+          },
+          content: {
+            type: 'string',
+            description: 'The passage text.',
+            example:
+              'The Transformer follows this overall architecture using stacked self-attention...'
+          },
+          tokenCount: {
+            type: 'integer',
+            description: 'Token length of `content` at chunking time.',
+            example: 412
+          },
+          strategyVersion: {
+            type: 'string',
+            description:
+              'Chunking strategy that produced this passage. Passages are re-generated when it changes.',
+            example: 'langchain-semantic-v1'
+          },
+          locator: {
+            type: 'object',
+            nullable: true,
+            description:
+              'Where the passage sits in the parsed source, used to deep-link the reader.',
+            properties: {
+              blockRange: {
+                type: 'array',
+                items: {
+                  type: 'integer'
+                },
+                minItems: 2,
+                maxItems: 2,
+                description: 'Inclusive [start, end] block indices.',
+                example: [12, 15]
+              },
+              headingPath: {
+                type: 'array',
+                items: {
+                  type: 'string'
+                },
+                description: 'Heading trail leading to the passage.',
+                example: ['3. Model Architecture', '3.2 Attention']
+              },
+              firstOrder: {
+                type: 'integer',
+                example: 12
+              },
+              lastOrder: {
+                type: 'integer',
+                example: 15
+              }
+            }
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      PassageSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['passage'],
+            properties: {
+              passage: {
+                $ref: '#/components/schemas/Passage'
+              }
+            }
+          }
+        }
+      },
+
       ListSourcesSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -3685,6 +3819,7 @@ export const openApiDocument = {
               'NOTE_ALREADY_CONVERTED',
               'SOURCE_NOT_FOUND',
               'SOURCE_NOT_FAILED',
+              'PASSAGE_NOT_FOUND',
               'INVALID_FILE_EXTENSION',
               'INVALID_FILE_SIGNATURE',
               'FILE_TOO_LARGE',
