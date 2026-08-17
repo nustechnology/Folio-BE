@@ -32,6 +32,15 @@ const authorField = () =>
     .allow('')
     .messages({ 'string.max': 'Author is too long' });
 
+// Names are generated as `<32 hex chars>.<ext>`, so anything else — path
+// traversal in particular — is rejected before the key is built.
+export const sourceMediaParamSchema = Joi.object({
+  sourceId: Joi.string().uuid().required(),
+  fileName: Joi.string()
+    .pattern(/^[0-9a-f]{32}\.[a-z0-9]{2,4}$/)
+    .required()
+});
+
 export const createWebSourceSchema = Joi.object({
   spaceId: spaceIdBodyField(),
   sourceType: sourceTypeField('Web'),

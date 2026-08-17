@@ -25,6 +25,7 @@ yarn dev:worker            # separate terminal: ingestion worker
 | `yarn db:migrate` | `prisma migrate dev` (interactive, prompts for name) |
 | `yarn db:migrate-prod` | `prisma migrate deploy` (apply committed migrations only) |
 | `yarn db:seed` | `tsx src/prisma/seeds/space.seed.ts` (tsx resolves `~/` aliases) |
+| `yarn reingest` | re-index every source against the current embedding model (`--help` for filters, `--reextract`, `--dry-run`) |
 
 ## Architecture
 
@@ -39,6 +40,8 @@ Routers are thin (Joi validation, middleware composition, response). Controllers
 - **Routes**: `src/api/routes/index.ts` — mounts `users`, `auth`, `spaces`, `sources`. `spaces` nests `notes`, `ask` and `conversations` under `/:spaceId`
 - **Ask (grounded QA)**: `ask.service.ts` orchestrates one answer — scope resolution → `retrieval.service.ts` (hybrid search + citation locators) → `ask-prompt.service.ts` (prompt + answer post-processing) → `model-gateway.service.ts` (streamed completion). The controller owns the SSE transport via `sse.service.ts#openEventStream`; `ask-suggestion.service.ts` backs the empty-state chips
 - **Ingestion worker**: `src/workers/ingestion.worker.ts` — separate process (`yarn dev:worker`); picks `ingestion` BullMQ jobs and runs extract → normalize → chunk → embed → index
+- **Parsers**: `src/api/services/parse.service.ts` — one parser per format, each returning `content` (text for embeddings) + `structuredContent` (reader HTML or slide/sheet JSON). All reader HTML goes through `finalizeHtml` (sanitize → table headers → styling); text projections of HTML come from `src/api/utils/html-to-text.util.ts`
+- **Embedded media**: images inside DOCX/EPUB are written to object storage by `src/api/services/media.service.ts` under `sources/<sourceId>/media/` and served by the public `GET /sources/:sourceId/media/:fileName` route — never inlined as data: URIs
 - **Queue**: `src/queues/ingestion.queue.ts` — enqueues `{ sourceId }` jobs after source creation/retry
 - **Config**: `src/config/enviroment.ts` (note: misspelled filename), `logger.ts`, `request-context.ts`, `redis.ts`, `minio.ts`
 - **Prisma schema**: `src/prisma/schema.prisma`
@@ -70,7 +73,8 @@ Routers are thin (Joi validation, middleware composition, response). Controllers
 - Local: `docker compose up -d db redis minio`
 - `DATABASE_URL` uses host `localhost` for host-based dev, `db` when running inside Compose
 - Postgres uses the `pgvector/pgvector:pg16` image — the `vector` extension enables semantic search on `Passage.embedding`
-- Retrieval is hybrid: `Passage.embedding` (ivfflat, cosine) fused with the generated `Passage.searchVector` tsvector (GIN) via Reciprocal Rank Fusion in `passage.repository.ts#searchHybrid`
+- `Passage.embedding` is `vector(1024)`, matching `bge-m3` at `MODEL_EMBEDDING_DIMENSIONS`. Changing the model or the width needs BOTH a migration on that column and a full re-index (`yarn reingest`) — vectors from different models are not comparable, and pgvector rejects a mismatched width outright
+- Retrieval is hybrid: `Passage.embedding` (hnsw, cosine) fused with the generated `Passage.searchVector` tsvector (GIN) via Reciprocal Rank Fusion in `passage.repository.ts#searchHybrid`
 - Adminer at `localhost:8080`
 - Models: `User`, `ResearchSpace`, `Source`, `Passage`, `Conversation`, `Note`, `Notebook`, `Citation`, `NoteCitation`
 

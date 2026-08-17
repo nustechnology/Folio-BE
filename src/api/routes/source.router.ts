@@ -12,6 +12,7 @@ import {
 import { sourceIdParamSchema } from '~/api/routes/validators/common.validator';
 import {
   listSourcesQuerySchema,
+  sourceMediaParamSchema,
   updateSourceSchema
 } from '~/api/routes/validators/source.validator';
 
@@ -48,6 +49,13 @@ router.get(
   auth,
   validateParams(sourceIdParamSchema),
   asyncHandler(SourceController.getPreviewUrl)
+);
+
+// Deliberately not behind `auth`: see SourceController.getMedia.
+router.get(
+  '/:sourceId/media/:fileName',
+  validateParams(sourceMediaParamSchema),
+  asyncHandler(SourceController.getMedia)
 );
 
 router.delete(

@@ -2,6 +2,10 @@ import Joi from 'joi';
 
 import { NAME, OBJECTIVE_MAX_LENGTH, PAGINATION } from '~/api/utils/constants';
 
+export const spaceIdParamSchema = Joi.object({
+  spaceId: Joi.string().uuid().required()
+});
+
 export const listSpacesQuerySchema = Joi.object({
   search: Joi.string().allow('').optional(),
   sort: Joi.string()

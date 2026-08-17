@@ -1,4 +1,5 @@
 import { Prisma } from '~/generated/prisma/client';
+import type { ProcessingState } from '~/generated/prisma/enums';
 import { ListSourceOptions } from '~/api/types/source';
 import prisma from '~/prisma/prisma.client';
 
@@ -72,12 +73,59 @@ const update = async (id: string, data: Prisma.SourceUpdateInput) => {
   });
 };
 
+// Editing a manual source's text invalidates every passage cut from the old
+// text. The two writes have to land together: dropping the passages first and
+// then failing to write the new state leaves a source that still reports itself
+// ready while having nothing left to retrieve, and nothing queued to rebuild it.
+const updateClearingPassages = async (
+  id: string,
+  data: Prisma.SourceUpdateInput
+) => {
+  const [, updated] = await prisma.$transaction([
+    prisma.passage.deleteMany({ where: { sourceId: id } }),
+    prisma.source.update({ where: { id }, data })
+  ]);
+  return updated;
+};
+
 const deleteById = async (id: string) => {
   return prisma.source.delete({ where: { id } });
 };
 
 const countBySpaceId = async (spaceId: string) => {
   return prisma.source.count({ where: { researchSpaceId: spaceId } });
+};
+
+// Sources to re-index, oldest first. Only light columns, so a large corpus
+// isn't pulled into memory at once; text is loaded per source as it runs.
+const findManyForReindex = async (filter: {
+  spaceId?: string;
+  sourceIds?: string[];
+  processingState?: ProcessingState;
+}) => {
+  const where: Prisma.SourceWhereInput = {};
+
+  if (filter.spaceId) {
+    where.researchSpaceId = filter.spaceId;
+  }
+  if (filter.sourceIds && filter.sourceIds.length > 0) {
+    where.id = { in: filter.sourceIds };
+  }
+  if (filter.processingState) {
+    where.processingState = filter.processingState;
+  }
+
+  return prisma.source.findMany({
+    where,
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      title: true,
+      sourceType: true,
+      processingState: true,
+      characterCount: true
+    }
+  });
 };
 
 /**
@@ -105,7 +153,9 @@ export default {
   findManyByIds,
   countReadyBySpaceId,
   findBySpaceId,
+  findManyForReindex,
   update,
+  updateClearingPassages,
   deleteById,
   countBySpaceId,
   findByOriginalNoteId,

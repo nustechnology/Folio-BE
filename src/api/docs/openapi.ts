@@ -25,6 +25,10 @@ export const openApiDocument = {
       description: 'Research space management'
     },
     {
+      name: 'Passages',
+      description: 'Source text segments and passages operations'
+    },
+    {
       name: 'Sources',
       description: 'Source management within a research space'
     },
@@ -988,102 +992,6 @@ export const openApiDocument = {
         }
       }
     },
-    '/api/v1/sources/status': {
-      get: {
-        tags: ['Sources'],
-        summary: 'Stream source processing status for all sources (SSE)',
-        description:
-          'Opens a Server-Sent Events stream that emits the source processing state in real time for all sources owned by the user. Immediately sends the current state for all owned sources, then streams `{sourceId, state, progress}` events as the ingestion worker advances any source through added (0%) → extracting_text (25%) → indexing_evidence (50%) → ready/failed (100%).',
-        operationId: 'streamAllSourceStatus',
-        security: [
-          {
-            bearerAuth: []
-          }
-        ],
-        responses: {
-          '200': {
-            description: 'Server-Sent Events stream',
-            content: {
-              'text/event-stream': {
-                schema: {
-                  type: 'string',
-                  example:
-                    'data: {"sourceId":"532a3be6-cd85-48ef-aa28-8d2ba8bb5eb0","state":"extracting_text","progress":25}\n\ndata: {"sourceId":"532a3be6-cd85-48ef-aa28-8d2ba8bb5eb0","state":"ready","progress":100}\n\n'
-                }
-              }
-            }
-          },
-          '401': {
-            $ref: '#/components/responses/Unauthorized'
-          }
-        }
-      }
-    },
-    '/api/v1/sources/{sourceId}/retry': {
-      post: {
-        tags: ['Sources'],
-        summary: 'Retry processing of a failed source',
-        description:
-          'Resets the processing state of a failed source back to added so the ingestion pipeline can re-run.',
-        operationId: 'retrySource',
-        security: [
-          {
-            bearerAuth: []
-          }
-        ],
-        parameters: [
-          {
-            name: 'sourceId',
-            in: 'path',
-            required: true,
-            schema: {
-              type: 'string',
-              format: 'uuid'
-            }
-          }
-        ],
-        responses: {
-          '200': {
-            description: 'Source reset for retry',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/SourceSuccessResponse'
-                }
-              }
-            }
-          },
-          '400': {
-            description:
-              'Source is not in failed state (code: SOURCE_NOT_FAILED)',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/ErrorResponse'
-                }
-              }
-            }
-          },
-          '401': {
-            $ref: '#/components/responses/Unauthorized'
-          },
-          '404': {
-            description: 'Source not found (code: SOURCE_NOT_FOUND)',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/ErrorResponse'
-                }
-              }
-            }
-          },
-          '429': { $ref: '#/components/responses/TooManyRequests' },
-          '500': {
-            $ref: '#/components/responses/InternalError'
-          }
-        }
-      }
-    },
     '/api/v1/passages/{passageId}': {
       get: {
         tags: ['Passages'],
@@ -1221,6 +1129,169 @@ export const openApiDocument = {
               }
             }
           },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/media/{fileName}': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Get an image extracted from a source document',
+        description:
+          'Streams an image that the parser pulled out of an uploaded DOCX or EPUB. The reader HTML in `structuredContent` references these by root-relative URL, so the web client resolves them against the API origin. Unauthenticated by necessity — a browser cannot attach a bearer token to an `<img>` tag — so access is gated on knowing the source UUID and the file name, which is a content hash generated at ingestion time.',
+        operationId: 'getSourceMedia',
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'fileName',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              pattern: '^[0-9a-f]{32}\\.[a-z0-9]{2,4}$'
+            },
+            description:
+              'Content-addressed file name, e.g. `9f2c…a10.png`. Any other shape is rejected.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Image stream',
+            content: {
+              'image/*': {
+                schema: {
+                  type: 'string',
+                  format: 'binary'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Malformed source id or file name',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '404': {
+            description: 'Media not found',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '500': {
+            $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/status': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Stream source processing status for all sources (SSE)',
+        description:
+          'Opens a Server-Sent Events stream that emits the source processing state in real time for all sources owned by the user. Immediately sends the current state for all owned sources, then streams `{sourceId, state, progress}` events as the ingestion worker advances any source through added (0%) → extracting_text (25%) → indexing_evidence (50%) → ready/failed (100%).',
+        operationId: 'streamAllSourceStatus',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Server-Sent Events stream',
+            content: {
+              'text/event-stream': {
+                schema: {
+                  type: 'string',
+                  example:
+                    'data: {"sourceId":"532a3be6-cd85-48ef-aa28-8d2ba8bb5eb0","state":"extracting_text","progress":25}\n\ndata: {"sourceId":"532a3be6-cd85-48ef-aa28-8d2ba8bb5eb0","state":"ready","progress":100}\n\n'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/retry': {
+      post: {
+        tags: ['Sources'],
+        summary: 'Retry processing of a failed source',
+        description:
+          'Resets the processing state of a failed source back to added so the ingestion pipeline can re-run.',
+        operationId: 'retrySource',
+        security: [
+          {
+            bearerAuth: []
+          }
+        ],
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'Source reset for retry',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/SourceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Source is not in failed state (code: SOURCE_NOT_FAILED)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            $ref: '#/components/responses/Unauthorized'
+          },
+          '404': {
+            description: 'Source not found (code: SOURCE_NOT_FOUND)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
           '500': {
             $ref: '#/components/responses/InternalError'
           }
@@ -3460,6 +3531,39 @@ export const openApiDocument = {
         }
       },
 
+      UpdateSourceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title'],
+        description:
+          '`title` is always required. `content` applies to Manual sources only; the URL and file of Web and File sources are not editable.',
+        properties: {
+          title: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 255,
+            description: 'New source title. Cannot be blank.',
+            example: 'Attention Is All You Need — annotated'
+          },
+          author: {
+            type: 'string',
+            maxLength: 100,
+            nullable: true,
+            description:
+              "New author. Empty string, null, or omitted stores 'Unknown Author'.",
+            example: 'Vaswani et al.'
+          },
+          content: {
+            type: 'string',
+            minLength: 10,
+            maxLength: 50000,
+            description:
+              'New body text for a Manual source. Ignored for other source types. If it differs from the stored content, existing passages are dropped and ingestion is re-enqueued.',
+            example: 'Revised notes: the scaling break appears at 7B.'
+          }
+        }
+      },
+
       Source: {
         type: 'object',
         required: [
@@ -3612,92 +3716,6 @@ export const openApiDocument = {
           }
         }
       },
-      UpdateSourceRequest: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          title: {
-            type: 'string',
-            maxLength: 255,
-            example: 'Updated AI Ethics Research Paper'
-          },
-          author: {
-            type: 'string',
-            maxLength: 100,
-            example: 'Alice Johnson'
-          },
-          content: {
-            type: 'string',
-            minLength: 10,
-            maxLength: 50000,
-            example: 'This is the updated manual source content text note...'
-          }
-        }
-      },
-      Passage: {
-        type: 'object',
-        required: [
-          'id',
-          'sourceId',
-          'content',
-          'tokenCount',
-          'strategyVersion',
-          'locator',
-          'createdAt'
-        ],
-        properties: {
-          id: {
-            type: 'string',
-            format: 'uuid',
-            example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-          },
-          sourceId: {
-            type: 'string',
-            format: 'uuid',
-            example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901'
-          },
-          content: {
-            type: 'string',
-            example: 'This is the clean passage text segment...'
-          },
-          tokenCount: {
-            type: 'integer',
-            example: 120
-          },
-          strategyVersion: {
-            type: 'string',
-            example: '1.0.0'
-          },
-          locator: {
-            type: 'object',
-            example: { index: 0, range: [0, 50] }
-          },
-          createdAt: {
-            type: 'string',
-            format: 'date-time',
-            example: '2026-08-04T07:21:03.069Z'
-          }
-        }
-      },
-      PassageSuccessResponse: {
-        type: 'object',
-        required: ['status', 'data'],
-        properties: {
-          status: {
-            type: 'string',
-            example: 'success'
-          },
-          data: {
-            type: 'object',
-            required: ['passage'],
-            properties: {
-              passage: {
-                $ref: '#/components/schemas/Passage'
-              }
-            }
-          }
-        }
-      },
       CreateFileSourceRequest: {
         type: 'object',
         description:
@@ -3806,6 +3824,107 @@ export const openApiDocument = {
           }
         }
       },
+
+      Passage: {
+        type: 'object',
+        required: [
+          'id',
+          'sourceId',
+          'content',
+          'tokenCount',
+          'strategyVersion',
+          'locator',
+          'createdAt'
+        ],
+        description:
+          'A single retrievable chunk of a source. The embedding and search vectors are stored but never serialized.',
+        properties: {
+          id: {
+            type: 'string',
+            format: 'uuid'
+          },
+          sourceId: {
+            type: 'string',
+            format: 'uuid',
+            description: 'The source this passage was chunked from.'
+          },
+          content: {
+            type: 'string',
+            description: 'The passage text.',
+            example:
+              'The Transformer follows this overall architecture using stacked self-attention...'
+          },
+          tokenCount: {
+            type: 'integer',
+            description: 'Token length of `content` at chunking time.',
+            example: 412
+          },
+          strategyVersion: {
+            type: 'string',
+            description:
+              'Chunking strategy that produced this passage. Passages are re-generated when it changes.',
+            example: 'langchain-semantic-v1'
+          },
+          locator: {
+            type: 'object',
+            nullable: true,
+            description:
+              'Where the passage sits in the parsed source, used to deep-link the reader.',
+            properties: {
+              blockRange: {
+                type: 'array',
+                items: {
+                  type: 'integer'
+                },
+                minItems: 2,
+                maxItems: 2,
+                description: 'Inclusive [start, end] block indices.',
+                example: [12, 15]
+              },
+              headingPath: {
+                type: 'array',
+                items: {
+                  type: 'string'
+                },
+                description: 'Heading trail leading to the passage.',
+                example: ['3. Model Architecture', '3.2 Attention']
+              },
+              firstOrder: {
+                type: 'integer',
+                example: 12
+              },
+              lastOrder: {
+                type: 'integer',
+                example: 15
+              }
+            }
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time'
+          }
+        }
+      },
+      PassageSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['passage'],
+            properties: {
+              passage: {
+                $ref: '#/components/schemas/Passage'
+              }
+            }
+          }
+        }
+      },
+
       ListSourcesSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -3881,6 +4000,7 @@ export const openApiDocument = {
               'NOTE_ALREADY_CONVERTED',
               'SOURCE_NOT_FOUND',
               'SOURCE_NOT_FAILED',
+              'PASSAGE_NOT_FOUND',
               'INVALID_FILE_EXTENSION',
               'INVALID_FILE_SIGNATURE',
               'FILE_TOO_LARGE',

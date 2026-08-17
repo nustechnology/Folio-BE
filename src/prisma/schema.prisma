@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider        = "prisma-client"
+  output          = "../generated/prisma"
   previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
   extensions = [vector]
 }
 
@@ -93,16 +93,16 @@ model Source {
 }
 
 model Passage {
-  id              String                     @id @default(uuid())
+  id              String                      @id @default(uuid())
   sourceId        String
-  source          Source                     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  source          Source                      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   content         String
   embedding       Unsupported("vector(1024)")
   searchVector    Unsupported("tsvector")
   tokenCount      Int
   strategyVersion String
   locator         Json
-  createdAt       DateTime                   @default(now())
+  createdAt       DateTime                    @default(now())
 
   @@index([sourceId])
 }
@@ -123,20 +123,20 @@ model Conversation {
 }
 
 model Note {
-  id                    String       @id @default(uuid())
-  researchSpaceId       String
-  researchSpace         ResearchSpace @relation(fields: [researchSpaceId], references: [id])
-  title                 String
-  content               String
+  id                   String        @id @default(uuid())
+  researchSpaceId      String
+  researchSpace        ResearchSpace @relation(fields: [researchSpaceId], references: [id])
+  title                String
+  content              String
   /// Plain-text projection of `content`, derived server-side on write. Search
   /// runs against this so a query cannot match the markup's tag names.
-  contentText           String       @default("")
-  originType            OriginType
-  originConversationId  String?
-  originConversation    Conversation? @relation(fields: [originConversationId], references: [id])
-  originMessageId       String?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  contentText          String        @default("")
+  originType           OriginType
+  originConversationId String?
+  originConversation   Conversation? @relation(fields: [originConversationId], references: [id])
+  originMessageId      String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   sourcesCreated     Source[]       @relation("SourceFromNote")
   citationReferences NoteCitation[]

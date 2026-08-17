@@ -35,6 +35,7 @@ router.post(
   asyncHandler(SpaceController.create)
 );
 
+// Backs the space name in the sources list and source reader breadcrumbs.
 router.get(
   '/:spaceId',
   auth,

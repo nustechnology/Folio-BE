@@ -59,6 +59,7 @@ const worker = new Worker(
     let result;
     try {
       result = await extract({
+        sourceId: source.id,
         sourceType: source.sourceType,
         sourceUrl: source.sourceUrl,
         content: source.content,
@@ -106,13 +107,21 @@ const worker = new Worker(
       structuredType: result.structuredContent?.type
     });
 
-    // Persist the extracted text + metadata. Web extraction may also enrich the
-    // title/author from the page <head> if the user left them blank.
+    // Persist the extracted text + metadata. A title/author discovered during
+    // extraction only fills fields left at their default, so one the uploader
+    // typed is never silently replaced.
+    const hasDefaultTitle =
+      !source.title.trim() ||
+      source.title === source.fileName ||
+      source.title.startsWith('Untitled Source - ');
+    const hasDefaultAuthor =
+      !source.author?.trim() || source.author === 'Unknown Author';
+
     await SourceRepository.update(sourceId, {
       content: result.content,
       structuredContent: result.structuredContent || null,
-      ...(result.title ? { title: result.title } : {}),
-      ...(result.author ? { author: result.author } : {}),
+      ...(result.title && hasDefaultTitle ? { title: result.title } : {}),
+      ...(result.author && hasDefaultAuthor ? { author: result.author } : {}),
       ...(result.pageCount !== undefined
         ? { pageCount: result.pageCount }
         : {}),

@@ -14,6 +14,7 @@
     "db:migrate": "npx prisma migrate dev",
     "db:migrate-prod": "npx prisma migrate deploy",
     "db:seed": "tsx src/prisma/seeds/space.seed.ts",
+    "reingest": "tsx src/scripts/reingest-sources.ts",
     "db:seed:ask": "tsx src/prisma/seeds/ask.seed.ts"
   },
   "dependencies": {
