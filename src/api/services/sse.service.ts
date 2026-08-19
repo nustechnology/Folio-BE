@@ -14,6 +14,20 @@ import SpaceRepository from '~/prisma/repositories/space.repository';
 // events to the client as Server-Sent Events.
 const GLOBAL_STATUS_CHANNEL = 'sources:status';
 
+// Comfortably under the shortest idle timeout on the path (30s dev proxy, 60s
+// client stall watchdog), which is what a heartbeat needs to beat.
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** Starts a `: ping` heartbeat and stops it when the client goes away. */
+const startHeartbeat = (res: Response): void => {
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded || res.destroyed) return;
+    res.write(': ping\n\n');
+  }, HEARTBEAT_INTERVAL_MS);
+
+  res.on('close', () => clearInterval(heartbeat));
+};
+
 // Client-facing progress per processing stage (0-100%).
 const PROGRESS_MAP: Record<string, number> = {
   added: 0,
@@ -62,6 +76,10 @@ export const openEventStream = (res: Response): EventStream => {
     'X-Accel-Buffering': 'no'
   });
   res.flushHeaders();
+
+  // The model can take tens of seconds to warm up before the first token,
+  // which otherwise reads as an idle connection to proxies and the client.
+  startHeartbeat(res);
 
   return {
     send: (event, data) => {
@@ -144,13 +162,10 @@ export const streamAllStatus = async (
   });
 
   // Periodic comment frame keeps the connection alive past idle proxies.
-  const heartbeat = setInterval(() => {
-    res.write(': ping\n\n');
-  }, 15000);
+  startHeartbeat(res);
 
-  // Cleanup: stop heartbeat + unsubscribe when the browser closes the stream.
+  // Cleanup: unsubscribe when the browser closes the stream.
   res.on('close', () => {
-    clearInterval(heartbeat);
     subscriber.unsubscribe(GLOBAL_STATUS_CHANNEL).catch(() => {});
     subscriber.disconnect();
   });

@@ -50,7 +50,16 @@ interface EnvInterface {
   OCR_REQUEST_TIMEOUT_MS: string;
 }
 
-const nodeEnv = process.env.NODE_ENV || '';
+// Defaults to development ('yarn dev' sets no NODE_ENV) and is validated so a
+// typo like 'Production' fails loudly instead of silently acting as dev.
+const KNOWN_NODE_ENVS = ['development', 'test', 'production'];
+const nodeEnv = process.env.NODE_ENV || 'development';
+
+if (!KNOWN_NODE_ENVS.includes(nodeEnv)) {
+  throw new Error(
+    `NODE_ENV must be one of ${KNOWN_NODE_ENVS.join(', ')} (got '${nodeEnv}')`
+  );
+}
 
 export const env: EnvInterface = {
   SERVER_PORT: process.env.PORT || '',
