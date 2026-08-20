@@ -137,6 +137,52 @@ const findByOriginalNoteId = async (originalNoteId: string) => {
   return prisma.source.findFirst({ where: { originalNoteId } });
 };
 
+/**
+ * The finished extraction of a byte-identical file this owner has already
+ * ingested, or null. Parsing is a pure function of the bytes, so a match lets
+ * the worker skip the download, the parse, and the OCR the parse would pay for.
+ *
+ * Scoped to the owner: identical input discloses nothing the uploader is not
+ * already holding, but staying in-tenant means that argument never has to be
+ * made, and the saving is dominated by one user reusing a file across spaces.
+ */
+const findReusableExtraction = async (options: {
+  sourceId: string;
+  fileHash: string;
+}) => {
+  const current = await prisma.source.findUnique({
+    where: { id: options.sourceId },
+    select: { researchSpace: { select: { ownerId: true } } }
+  });
+
+  if (!current) {
+    return null;
+  }
+
+  return prisma.source.findFirst({
+    where: {
+      id: { not: options.sourceId },
+      fileHash: options.fileHash,
+      sourceType: 'File',
+      // The only state meaning the pipeline finished, so `content` is settled.
+      processingState: 'ready',
+      content: { not: '' },
+      researchSpace: { ownerId: current.researchSpace.ownerId }
+    },
+    // Newest, so a re-parse under an improved parser wins over an older row.
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      sourceUrl: true,
+      fileType: true,
+      content: true,
+      structuredContent: true,
+      pageCount: true,
+      characterCount: true
+    }
+  });
+};
+
 const findManyByOwnerId = async (ownerId: string) => {
   return prisma.source.findMany({
     where: {
@@ -159,5 +205,6 @@ export default {
   deleteById,
   countBySpaceId,
   findByOriginalNoteId,
+  findReusableExtraction,
   findManyByOwnerId
 };

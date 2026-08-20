@@ -379,6 +379,78 @@ type PdfDocument = Awaited<
   >['promise']
 >;
 
+// Column edges within this many points of each other count as the same column.
+const COLUMN_ALIGN_TOLERANCE = 3;
+// A table needs a run of at least this many consecutive lines...
+const MIN_TABLE_ROWS = 3;
+// ...opening on a line split into at least this many columns...
+const MIN_COLUMNS_PER_LINE = 3;
+// ...and holding at least this many of them aligned all the way down.
+//
+// Three columns is the floor because two is ambiguous: a page set in two
+// justified columns aligns on the gutter and the right margin, exactly like a
+// two-column table. Two-column tables are given up to avoid OCRing articles.
+const MIN_SHARED_COLUMNS = 2;
+
+// The horizontal extent of one column on one line. `start` is null for the
+// leftmost column: every line opens at the left margin, prose and tables alike,
+// so that edge would let justified prose pose as a table.
+export type ColumnEdges = { start: number | null; end: number };
+
+const edgesAlign = (a: number | null, b: number | null): boolean =>
+  a !== null && b !== null && Math.abs(a - b) <= COLUMN_ALIGN_TOLERANCE;
+
+// Either edge counts, because which one is stable depends on the cell's
+// alignment. Left-aligned labels agree on `start`; right-aligned numbers agree
+// on `end` while their `start` moves with each value's width ("1,204,556" vs
+// "88"), which is why matching starts alone missed financial tables.
+const columnsAlign = (a: ColumnEdges, b: ColumnEdges): boolean =>
+  edgesAlign(a.start, b.start) || edgesAlign(a.end, b.end);
+
+// Wide gaps alone do not mean a table: justified prose stretches its spaces,
+// lists indent, and TOC rows carry dot leaders. What distinguishes a table is
+// that its columns hold the *same* position on every row, so this looks for a
+// run of consecutive lines that agree on where their columns sit.
+//
+// This gate decides whether a page is sent to the OCR provider, so a loose
+// version spends real quota on pages pdfjs already read perfectly.
+export const hasAlignedColumnRun = (
+  columnsPerLine: ColumnEdges[][]
+): boolean => {
+  for (
+    let start = 0;
+    start + MIN_TABLE_ROWS <= columnsPerLine.length;
+    start++
+  ) {
+    // Candidates come from the top line of the window: a table's header row
+    // shares its column positions with the rows beneath it.
+    let shared = columnsPerLine[start];
+    if (shared.length < MIN_COLUMNS_PER_LINE) {
+      continue;
+    }
+
+    let rows = 1;
+    for (let next = start + 1; next < columnsPerLine.length; next++) {
+      // Narrow the shared set as the run extends downward — a column counts
+      // only while every row so far still places one at that position.
+      const aligned = shared.filter((column) =>
+        columnsPerLine[next].some((other) => columnsAlign(column, other))
+      );
+      if (aligned.length < MIN_SHARED_COLUMNS) {
+        break;
+      }
+      shared = aligned;
+      rows++;
+    }
+
+    if (rows >= MIN_TABLE_ROWS) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 // Reads every page of an already-open document. The page count goes out with
 // the text so callers don't have to parse the same bytes a second time just to
 // learn how many pages there were.
@@ -439,7 +511,8 @@ const readPdfPages = async (
     linesMap.sort((a, b) => b.y - a.y);
 
     let pageText = '';
-    let tableScore = 0;
+    // One entry per line, in top-to-bottom order.
+    const columnsPerLine: ColumnEdges[][] = [];
 
     for (let j = 0; j < linesMap.length; j++) {
       const line = linesMap[j];
@@ -467,7 +540,9 @@ const readPdfPages = async (
       let lineText = '';
       let prevX = -1;
       let prevWidth = 0;
-      let lineGapsCount = 0;
+      // The columns this line is split into, fed to hasAlignedColumnRun.
+      const columns: ColumnEdges[] = [];
+      let columnStart: number | null = null;
 
       for (const item of line.items) {
         const x = item.transform[4];
@@ -476,7 +551,9 @@ const readPdfPages = async (
           // If the horizontal gap is larger than colGap, treat it as a column separator (tab)
           if (gap > colGap) {
             lineText += '\t';
-            lineGapsCount++;
+            // The gap closes the column that was open and opens the next one.
+            columns.push({ start: columnStart, end: prevX + prevWidth });
+            columnStart = x;
           } else if (gap > wordGap) {
             lineText += ' ';
           }
@@ -490,12 +567,12 @@ const readPdfPages = async (
         );
       }
 
-      // Add to table score if this row exhibits multiple aligned text blocks (columns)
-      if (lineGapsCount >= 2) {
-        tableScore += 2;
-      } else if (lineGapsCount === 1) {
-        tableScore += 1;
+      // The rightmost column is closed by the end of the line, not by a gap.
+      if (prevX !== -1) {
+        columns.push({ start: columnStart, end: prevX + prevWidth });
       }
+
+      columnsPerLine.push(columns);
 
       // If line font size is significantly larger than body text size, format it as a markdown heading
       const trimmedLine = lineText.trim();
@@ -532,8 +609,9 @@ const readPdfPages = async (
       }
     }
 
-    // If page score shows visual column structure patterns, mark it as a table page
-    if (tableScore >= 3) {
+    // Only pages with a genuine aligned column run go to the OCR provider;
+    // anything pdfjs already read correctly stays local and costs nothing.
+    if (hasAlignedColumnRun(columnsPerLine)) {
       tablePages.push(i);
     }
 
@@ -1134,8 +1212,10 @@ const parsePdf = async (buffer: Buffer) => {
       const pageNum = Number(pageMarker[1]);
       const rest = p.replace(/^\[page \d+\]\s*/, '');
 
-      // Use Gemini visual layout/OCR text if available for this page, otherwise use local coordinates
-      const hasOcrText = ocrPageMap[pageNum] !== undefined;
+      // Use OCR text if available, otherwise local coordinates. A blank entry
+      // counts as absent: treating it as a successful read would empty the page
+      // in the reader while the merge below kept the local text for embeddings.
+      const hasOcrText = Boolean(ocrPageMap[pageNum]?.trim());
       const pageText = hasOcrText ? ocrPageMap[pageNum] : rest;
 
       const isTablePage = tablePages.includes(pageNum);

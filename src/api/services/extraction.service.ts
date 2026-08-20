@@ -16,6 +16,7 @@ import { escapeHtml } from '~/api/utils/source-html.util';
 import logger from '~/config/logger';
 import type { SourceType } from '~/generated/prisma/enums';
 import ParseService from '~/api/services/parse.service';
+import SourceRepository from '~/prisma/repositories/source.repository';
 
 // ExtractInput is what the worker feeds in; sourceUrl is the MinIO object key
 // for File sources or the article URL for Web sources.
@@ -25,6 +26,13 @@ export type ExtractInput = {
   sourceUrl?: string | null;
   content?: string;
   fileType?: string | null;
+  // SHA-256 of the uploaded bytes, used to reuse an identical file's extraction
+  // instead of parsing — and paying to OCR — the same document twice.
+  fileHash?: string | null;
+  // Set by `yarn reingest --reextract`, which exists to rebuild stored text
+  // under a changed parser. A partial run leaves an untouched sibling with the
+  // same checksum still ready, and reusing it would undo the run.
+  forceReparse?: boolean;
 };
 
 export type ExtractResult = {
@@ -695,6 +703,80 @@ const sanitizeText = (text: string): string => {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 };
 
+// Media saved during a parse lives under the source id that ran it, and the
+// stored HTML points at it by URL. Reusing that HTML would leave the new source
+// borrowing the first one's files, breaking once it is deleted. Those re-parse
+// instead — and they are never the PDFs whose OCR this is here to avoid.
+const referencesOwnMedia = (
+  structuredContent: unknown,
+  sourceId: string
+): boolean =>
+  structuredContent != null &&
+  JSON.stringify(structuredContent).includes(`/sources/${sourceId}/media/`);
+
+// The stored extraction of an identical file, or null to parse this one.
+const reuseExtraction = async (
+  input: ExtractInput,
+  format: string
+): Promise<ExtractResult | null> => {
+  if (input.forceReparse || !input.fileHash) {
+    return null;
+  }
+
+  const previous = await SourceRepository.findReusableExtraction({
+    sourceId: input.sourceId,
+    fileHash: input.fileHash
+  });
+
+  if (!previous) {
+    return null;
+  }
+
+  // Identical bytes parse differently under a different format — the same text
+  // is one column as `.txt` and a table as `.csv` — so a matching checksum
+  // alone does not make the stored output applicable.
+  const previousFormat = getFormatFromMimeAndExt(
+    previous.fileType,
+    getFileExtension(previous.sourceUrl ?? '') ?? ''
+  );
+
+  if (previousFormat !== format) {
+    logger.debug('[Extractor] Identical file was parsed as another format', {
+      sourceId: input.sourceId,
+      candidate: previous.id,
+      previousFormat,
+      format
+    });
+    return null;
+  }
+
+  if (referencesOwnMedia(previous.structuredContent, previous.id)) {
+    logger.debug('[Extractor] Identical file carries per-source media', {
+      sourceId: input.sourceId,
+      candidate: previous.id
+    });
+    return null;
+  }
+
+  logger.info('[Extractor] Reusing the extraction of an identical file', {
+    sourceId: input.sourceId,
+    reusedFrom: previous.id,
+    format
+  });
+
+  return {
+    content: previous.content,
+    structuredContent: previous.structuredContent ?? undefined,
+    pageCount: previous.pageCount ?? undefined,
+    // Recomputed rather than copied, so it always describes the text returned.
+    characterCount: previous.content.length
+    // `title` and `author` are deliberately omitted: those columns hold
+    // whatever the uploader last set, not what the file declared, so copying
+    // them would spread one source's edits. A blank title falls back to the
+    // uploaded file name as usual.
+  };
+};
+
 // Dispatcher: picks the extractor based on source type and returns sanitized
 // text + metadata. File sources are downloaded from MinIO first.
 export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
@@ -763,14 +845,22 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
     throw new Error('File source is missing an object key.');
   }
 
+  const ext = getFileExtension(input.sourceUrl) ?? '';
+  const format = getFormatFromMimeAndExt(input.fileType, ext);
+
+  // Before the download: a hit costs one indexed lookup and skips the object
+  // fetch, the parse, and any OCR the parse would have billed for.
+  const reused = await reuseExtraction(input, format);
+  if (reused) {
+    return reused;
+  }
+
   logger.debug('[Extractor] Downloading object from MinIO bucket', {
     objectKey: input.sourceUrl
   });
   const buffer = await downloadObject(
     normalizeStoredObjectKey(input.sourceUrl)
   );
-  const ext = getFileExtension(input.sourceUrl) ?? '';
-  const format = getFormatFromMimeAndExt(input.fileType, ext);
 
   logger.info('[Extractor] Selected file extraction strategy', {
     resolvedFormat: format,

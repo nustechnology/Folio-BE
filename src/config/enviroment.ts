@@ -48,6 +48,7 @@ interface EnvInterface {
   GEMINI_API_KEY: string;
   OCR_CHARS_PER_PAGE_THRESHOLD: string;
   OCR_REQUEST_TIMEOUT_MS: string;
+  OCR_MAX_TABLE_PAGES: string;
 }
 
 // Defaults to development ('yarn dev' sets no NODE_ENV) and is validated so a
@@ -133,7 +134,10 @@ export const env: EnvInterface = {
   // OCR sends a whole PDF and waits for every page to come back, so it needs a
   // far longer deadline than a chat completion. Kept separate from
   // MODEL_REQUEST_TIMEOUT_MS for that reason.
-  OCR_REQUEST_TIMEOUT_MS: process.env.OCR_REQUEST_TIMEOUT_MS || '300000'
+  OCR_REQUEST_TIMEOUT_MS: process.env.OCR_REQUEST_TIMEOUT_MS || '300000',
+  // Targeted table OCR is billed per page sent. Per-source spend ceiling:
+  // tables past this many pages keep their local pdfjs layout.
+  OCR_MAX_TABLE_PAGES: process.env.OCR_MAX_TABLE_PAGES || '25'
 };
 
 const missing = [

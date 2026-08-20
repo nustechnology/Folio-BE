@@ -215,7 +215,7 @@ const run = async (): Promise<number> => {
           processingError: null
         });
         await publishStatus(source.id, 'added');
-        await enqueueIngestion(source.id);
+        await enqueueIngestion(source.id, { forceReparse: true });
         done++;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

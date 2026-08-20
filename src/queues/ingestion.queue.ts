@@ -18,10 +18,17 @@ export const ingestionQueue = new Queue(INGESTION_QUEUE_NAME, {
 // POST /sources/:id/retry) can enqueue the same `jobId` again — BullMQ skips
 // adding a job whose `jobId` already exists, so a retained failed job would
 // silently block reprocessing.
-export const enqueueIngestion = async (sourceId: string): Promise<void> => {
+//
+// `forceReparse` is for the re-extract path: extraction normally reuses the
+// stored output of a byte-identical file, which is wrong when the point of the
+// run is to rebuild that output under a changed parser.
+export const enqueueIngestion = async (
+  sourceId: string,
+  options: { forceReparse?: boolean } = {}
+): Promise<void> => {
   await ingestionQueue.add(
     'ingest-source',
-    { sourceId },
+    { sourceId, forceReparse: options.forceReparse ?? false },
     {
       jobId: `ingest-${sourceId}`,
       removeOnComplete: true,

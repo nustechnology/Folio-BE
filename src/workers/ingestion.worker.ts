@@ -20,7 +20,10 @@ import { OcrError } from '~/api/services/ocr.service';
 const worker = new Worker(
   INGESTION_QUEUE_NAME,
   async (job) => {
-    const { sourceId } = job.data as { sourceId: string };
+    const { sourceId, forceReparse } = job.data as {
+      sourceId: string;
+      forceReparse?: boolean;
+    };
     logger.info('[Worker] Ingestion job picked up by worker', {
       jobId: job.id,
       sourceId
@@ -63,7 +66,9 @@ const worker = new Worker(
         sourceType: source.sourceType,
         sourceUrl: source.sourceUrl,
         content: source.content,
-        fileType: source.fileType
+        fileType: source.fileType,
+        fileHash: source.fileHash,
+        forceReparse
       });
     } catch (error: any) {
       if (error instanceof OcrError || error.name === 'OcrError') {

@@ -90,6 +90,9 @@ model Source {
 
   @@index([researchSpaceId])
   @@index([originalNoteId])
+  // Ingestion looks a file up by checksum before parsing, so this is read once
+  // per uploaded file whether or not a match exists.
+  @@index([fileHash])
 }
 
 model Passage {
