@@ -159,7 +159,9 @@ const parseXlsxSheets = async (
     // after it. The self-closing form has to be the first alternative: tried
     // second, the open-tag branch matches `<si/>` as an opening tag and runs on
     // to the next element's `</si>`, swallowing two entries into one.
-    const siMatches = xml.matchAll(/<si\b[^>]*\/>|<si\b[^>]*>([\s\S]*?)<\/si>/gi);
+    const siMatches = xml.matchAll(
+      /<si\b[^>]*\/>|<si\b[^>]*>([\s\S]*?)<\/si>/gi
+    );
     for (const si of siMatches) {
       // An empty <si/> still occupies an index, so it is pushed like any other.
       sharedStrings.push(readXmlTextRuns(si[1] ?? ''));

@@ -36,7 +36,9 @@ const citationDetailInclude = {
     include: {
       citation: {
         include: {
-          source: { select: { id: true, title: true, sourceType: true, author: true } }
+          source: {
+            select: { id: true, title: true, sourceType: true, author: true }
+          }
         }
       }
     }

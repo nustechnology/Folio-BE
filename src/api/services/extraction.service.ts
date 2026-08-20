@@ -766,7 +766,9 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
   logger.debug('[Extractor] Downloading object from MinIO bucket', {
     objectKey: input.sourceUrl
   });
-  const buffer = await downloadObject(normalizeStoredObjectKey(input.sourceUrl));
+  const buffer = await downloadObject(
+    normalizeStoredObjectKey(input.sourceUrl)
+  );
   const ext = getFileExtension(input.sourceUrl) ?? '';
   const format = getFormatFromMimeAndExt(input.fileType, ext);
 

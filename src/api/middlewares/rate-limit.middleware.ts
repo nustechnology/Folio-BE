@@ -53,7 +53,8 @@ export const writeRateLimiter = rateLimit({
      that a shared bucket would throttle ordinary typing. Supplying a custom
      `keyGenerator` also suppresses the library's `trust proxy` validations,
      which is why this app needs no `app.set('trust proxy', ...)`. */
-  keyGenerator: (req) => identifyClient(req) ?? ipKeyGenerator(req.ip ?? '', 56),
+  keyGenerator: (req) =>
+    identifyClient(req) ?? ipKeyGenerator(req.ip ?? '', 56),
 
   /* Hand the rejection to the global error handler instead of writing the
      library's plain-text 429, so a throttled auto-save sees the same

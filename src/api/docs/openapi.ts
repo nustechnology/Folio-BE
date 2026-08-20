@@ -1588,7 +1588,8 @@ export const openApiDocument = {
         },
         responses: {
           '201': {
-            description: 'Source created from the note and queued for ingestion',
+            description:
+              'Source created from the note and queued for ingestion',
             content: {
               'application/json': {
                 schema: {
@@ -3169,7 +3170,7 @@ export const openApiDocument = {
         type: 'object',
         additionalProperties: false,
         description:
-          "Optional overrides for the created source. The body may be omitted entirely. Content is never accepted here — the snapshot is taken from the stored note.",
+          'Optional overrides for the created source. The body may be omitted entirely. Content is never accepted here — the snapshot is taken from the stored note.',
         properties: {
           title: {
             type: 'string',

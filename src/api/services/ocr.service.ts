@@ -82,7 +82,8 @@ const isTransient = (error: unknown): boolean => {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-const retryDelayMs = (attempt: number) => Math.min(30_000, 2_000 * 2 ** attempt);
+const retryDelayMs = (attempt: number) =>
+  Math.min(30_000, 2_000 * 2 ** attempt);
 
 // One OCR round-trip, bounded by REQUEST_TIMEOUT_MS and retried while the
 // failure looks like the provider rather than the request.

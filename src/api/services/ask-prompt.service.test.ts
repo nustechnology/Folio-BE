@@ -25,8 +25,10 @@ const makeEvidence = (count: number): EvidenceItem[] =>
   );
 
 const makeCitations = (sourceIds: string[]): AnswerCitation[] =>
-  sourceIds.map((sourceId, index) => ({ sourceId, id: `c${index}` }) as
-    unknown as AnswerCitation);
+  sourceIds.map(
+    (sourceId, index) =>
+      ({ sourceId, id: `c${index}` }) as unknown as AnswerCitation
+  );
 
 describe('processAnswer — limitation splitting', () => {
   // Regression: the matcher was case-insensitive and unanchored, so this exact
@@ -155,8 +157,10 @@ describe('processAnswer — citation markers', () => {
     ).toBe('Báo cáo năm [2023] tăng [1].');
 
     expect(
-      AskPrompt.processAnswer('Giai đoạn [2020-2024] mạnh [1].', makeEvidence(3))
-        .content
+      AskPrompt.processAnswer(
+        'Giai đoạn [2020-2024] mạnh [1].',
+        makeEvidence(3)
+      ).content
     ).toBe('Giai đoạn [2020-2024] mạnh [1].');
   });
 
@@ -179,8 +183,10 @@ describe('processAnswer — citation markers', () => {
   // rejected range as an invented citation and deleted year ranges from answers.
   it('preserves a wide range of implausible numbers as prose', () => {
     expect(
-      AskPrompt.processAnswer('Giai đoạn [2020-2060] mạnh [1].', makeEvidence(3))
-        .content
+      AskPrompt.processAnswer(
+        'Giai đoạn [2020-2060] mạnh [1].',
+        makeEvidence(3)
+      ).content
     ).toBe('Giai đoạn [2020-2060] mạnh [1].');
 
     expect(
@@ -297,7 +303,9 @@ describe('deriveLimitation', () => {
         readySourceCount: 4,
         scope: 'space'
       })
-    ).toBe('Only 1 of 4 ready sources contains evidence bearing on this question.');
+    ).toBe(
+      'Only 1 of 4 ready sources contains evidence bearing on this question.'
+    );
   });
 
   it('does not flag a space-wide answer spanning several sources', () => {

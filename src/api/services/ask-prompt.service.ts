@@ -89,7 +89,8 @@ const buildMessages = (options: {
 // still rejecting ordinary bracketed prose is unreadable; this splits the
 // permissive match from the strict interpretation.
 const BRACKETED_RUN = /\[([^\][]{1,40})\]/g;
-const MARKER_BODY = /^(?:e|ev|evidence|source|ref|\^|#)?\s*(\d+(?:\s*[-–—,;]\s*\d+)*)$/i;
+const MARKER_BODY =
+  /^(?:e|ev|evidence|source|ref|\^|#)?\s*(\d+(?:\s*[-–—,;]\s*\d+)*)$/i;
 const MARKER_SEPARATOR = /[,;]/;
 const MARKER_RANGE = /[-–—]/;
 
@@ -103,10 +104,7 @@ const MAX_RANGE_SPAN = 20;
  * decides whether an unresolvable run was a citation attempt or prose.
  */
 const literalNumbers = (body: string): number[] =>
-  body
-    .split(/\D+/)
-    .filter(Boolean)
-    .map(Number);
+  body.split(/\D+/).filter(Boolean).map(Number);
 
 /**
  * Expands a marker body into the evidence numbers it names. "1" → [1],
@@ -117,7 +115,9 @@ const parseMarkerNumbers = (body: string): number[] => {
   const numbers: number[] = [];
 
   for (const part of body.split(MARKER_SEPARATOR)) {
-    const bounds = part.split(MARKER_RANGE).map((value) => Number(value.trim()));
+    const bounds = part
+      .split(MARKER_RANGE)
+      .map((value) => Number(value.trim()));
 
     if (bounds.length === 1) {
       if (Number.isInteger(bounds[0])) {
@@ -191,8 +191,7 @@ const splitLimitation = (
 
   return {
     body: (raw.slice(0, last.index) + after.slice(caveatLine.length)).trimEnd(),
-    limitation:
-      caveatLine.trim().replace(TRAILING_EMPHASIS, '').trim() || null
+    limitation: caveatLine.trim().replace(TRAILING_EMPHASIS, '').trim() || null
   };
 };
 
