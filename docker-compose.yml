@@ -15,8 +15,9 @@ x-folio-service: &folio-service
       condition: service_healthy
   environment:
     # .env carries host-mode values (localhost); inside the network these live
-    # on their compose services. Ollama is the exception: it runs on the host,
-    # reached through the gateway below.
+    # on their compose services. Ollama is the exception — it stays on the HOST
+    # by default (reached through the gateway below) since Docker Desktop gives
+    # containers no Metal access, and a containerised Ollama is much slower.
     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     REDIS_HOST: redis
     REDIS_PORT: 6379
@@ -24,12 +25,10 @@ x-folio-service: &folio-service
     MINIO_PORT: 9000
     MODEL_EMBEDDING_BASE_URL: ${MODEL_EMBEDDING_BASE_URL_DOCKER:-http://host.docker.internal:11434/v1}
     # Overridden rather than left to the fallback in `src/config/enviroment.ts`:
-    # that fallback reads MODEL_EMBEDDING_BASE_URL, which is correct only while
-    # MODEL_CHAT_BASE_URL is blank. A .env that sets it for host mode
-    # (`http://localhost:11434/v1`) would otherwise reach into the container,
-    # where localhost is the container itself. The nested default keeps chat
-    # following embeddings, so a cloud endpoint set through
-    # MODEL_EMBEDDING_BASE_URL_DOCKER still serves both.
+    # that fallback reads MODEL_EMBEDDING_BASE_URL, which inside .env is the
+    # host-mode value (`localhost:11434`) — inside the container, localhost is
+    # the container itself. The nested default keeps chat following embeddings
+    # unless MODEL_CHAT_BASE_URL_DOCKER is set separately.
     MODEL_CHAT_BASE_URL: ${MODEL_CHAT_BASE_URL_DOCKER:-${MODEL_EMBEDDING_BASE_URL_DOCKER:-http://host.docker.internal:11434/v1}}
   # Docker Desktop resolves this name already; Linux hosts need the mapping.
   extra_hosts:
