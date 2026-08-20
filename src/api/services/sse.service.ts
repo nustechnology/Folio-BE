@@ -120,7 +120,10 @@ export const streamAllStatus = async (
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    Connection: 'keep-alive'
+    Connection: 'keep-alive',
+    // Same reason as openEventStream: without it nginx buffers the response,
+    // and since this stream never ends the client sees nothing at all.
+    'X-Accel-Buffering': 'no'
   });
   res.flushHeaders();
 

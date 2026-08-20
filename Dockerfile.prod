@@ -1,16 +1,75 @@
-FROM node:22-alpine
+# syntax=docker/dockerfile:1
 
+# Folio backend — Express API and the BullMQ ingestion worker share this image.
+#
+# Deployed as /srv/folio/backend/Dockerfile.prod. The plain `Dockerfile` beside
+# it stays as-is: it is the local `yarn dev` image and is not used in production.
+#
+# Stages:
+#   deps    — Yarn 4 install, dev dependencies included (tsc, prisma live there)
+#   builder — prisma generate + tsc + tsc-alias. Also the stage the one-shot
+#             migrate service runs from, since `prisma migrate deploy` needs the
+#             Prisma CLI that the runtime stage deliberately omits.
+#   runner  — production dependencies only, non-root, no build toolchain
+#
+# Node is pinned to the 22 line to match .nvmrc (v22.17.1).
+
+FROM node:22-alpine AS base
+# Corepack ships with Node 22. This repo is on Yarn 4 (yarn.lock carries
+# __metadata.version 8), which the Yarn 1.x bundled in the image cannot read.
+# The version is pinned explicitly because package.json has no packageManager
+# field for Corepack to read it from.
+RUN corepack enable && corepack prepare yarn@4.12.0 --activate
 WORKDIR /app
 
+# ---- dependencies -----------------------------------------------------------
+FROM base AS deps
+COPY package.json yarn.lock .yarnrc.yml ./
+RUN yarn install --immutable
+
+# ---- build / migrations -----------------------------------------------------
+FROM base AS builder
+# Prisma's schema engine, which `migrate deploy` shells out to, is a native
+# binary linked against OpenSSL. Alpine does not ship it by default.
 RUN apk add --no-cache openssl
-
-COPY package.json yarn.lock ./
-RUN yarn install
-
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# `yarn build` runs prisma generate, then tsc, then tsc-alias. Generation only
+# parses the schema, so this URL is never connected to — it just satisfies the
+# datasource block during the build.
+RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" yarn build
 
-RUN DATABASE_URL=postgresql://build:build@localhost:5432/build yarn build
+# ---- runtime ----------------------------------------------------------------
+FROM base AS runner
+ENV NODE_ENV=production \
+    PORT=5000 \
+    MULTER_TEMP_DIR=/app/tmp
+# Nothing in this stage may shell out to the Prisma CLI — it is not installed
+# here. Migrations run from the builder stage as a one-shot compose service.
+ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
 
-EXPOSE 4000
+COPY package.json yarn.lock .yarnrc.yml ./
+# Production dependencies only: drops tsc, tsx, vitest, eslint and the Prisma
+# CLI from the runtime image.
+RUN yarn workspaces focus --production && yarn cache clean
 
-CMD ["sh", "-c", "yarn db:migrate-prod && yarn start"]
+# The Prisma 7 client is generated as plain TypeScript into src/generated, so
+# tsc compiles it to dist/generated along with everything else. No engine
+# binaries and no schema file are needed at runtime — the pg driver adapter
+# talks to Postgres directly.
+COPY --from=builder --chown=node:node /app/dist ./dist
+
+# multer stages uploads on disk here before they are streamed to MinIO. Created
+# owned by `node` so the bind mount that replaces it inherits that ownership.
+RUN mkdir -p /app/tmp && chown -R node:node /app/tmp
+
+USER node
+
+# Documentation only — no host port is published; Nginx reaches this over the
+# shared Docker network by container name.
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD wget -qO /dev/null http://127.0.0.1:5000/health || exit 1
+
+CMD ["node", "dist/index.js"]

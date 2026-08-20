@@ -4,6 +4,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "target": "es6",
+    // Node 22 provides the ES2022 globals (AggregateError, .cause, Array.at).
+    // Without this, lib defaults to the target and typechecking fails on them.
+    // Emit is unaffected — this widens the type surface, not the output.
+    "lib": ["ES2022"],
     "noImplicitAny": true,
     "moduleResolution": "node",
     "resolveJsonModule": true,
