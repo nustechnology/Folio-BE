@@ -332,7 +332,11 @@ const retry = async (sourceId: string, userId: string) => {
 
   const updated = await SourceRepository.update(sourceId, {
     processingState: 'added',
-    processingError: null
+    processingError: null,
+    // Left over from the previous attempt, where it would describe a run that
+    // is no longer the one being reported on. sse.service reads it to tell
+    // which stage a failure reached.
+    characterCount: null
   });
 
   await enqueueIngestion(sourceId);

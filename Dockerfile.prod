@@ -47,7 +47,14 @@ ENV NODE_ENV=production \
 COPY package.json yarn.lock .yarnrc.yml ./
 # Production dependencies only: drops tsc, tsx, vitest, eslint and the Prisma
 # CLI from the runtime image.
-RUN yarn workspaces focus --production && yarn cache clean
+#
+# @napi-rs/canvas is then deleted. pdfjs-dist requires it on import to polyfill
+# DOMMatrix/Path2D, which only matter when rasterizing a page — parse.service.ts
+# only calls getTextContent(). Its musl binding uses instructions this CPU lacks,
+# so loading it killed the worker with SIGILL before any JS ran. pdfjs warns that
+# it cannot polyfill the two globals and carries on without it.
+RUN yarn workspaces focus --production && yarn cache clean \
+    && rm -rf node_modules/@napi-rs
 
 # The Prisma 7 client is generated as plain TypeScript into src/generated, so
 # tsc compiles it to dist/generated along with everything else. No engine

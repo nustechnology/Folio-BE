@@ -33,20 +33,33 @@ const PROGRESS_MAP: Record<string, number> = {
   added: 0,
   extracting_text: 25,
   indexing_evidence: 50,
-  ready: 100,
-  failed: 100
+  ready: 100
+};
+
+// `failed` is not a stage, so it has no progress of its own — the UI wants how
+// far the source got, to mark that step. Extraction writes `characterCount`
+// before indexing starts, and the retry path clears it, so it always describes
+// the current attempt.
+const progressFor = (state: string, characterCount?: number | null): number => {
+  if (state === 'failed') {
+    return characterCount == null
+      ? PROGRESS_MAP.extracting_text
+      : PROGRESS_MAP.indexing_evidence;
+  }
+  return PROGRESS_MAP[state] ?? 0;
 };
 
 // Serialize a status payload into an SSE `data:` frame.
 const buildEvent = (
   sourceId: string,
   state: string,
-  error?: string
+  error?: string,
+  characterCount?: number | null
 ): string => {
   const payload: Record<string, unknown> = {
     sourceId,
     state,
-    progress: PROGRESS_MAP[state] ?? 0
+    progress: progressFor(state, characterCount)
   };
   if (error) {
     payload.error = error;
@@ -134,7 +147,8 @@ export const streamAllStatus = async (
       buildEvent(
         source.id,
         source.processingState,
-        source.processingError ?? undefined
+        source.processingError ?? undefined,
+        source.characterCount
       )
     );
   }
@@ -158,7 +172,10 @@ export const streamAllStatus = async (
       );
       if (!space) return;
 
-      res.write(buildEvent(sourceId, state, error));
+      // The worker persists the state change before publishing it, so the row
+      // fetched above is current — including the `characterCount` a failure's
+      // progress is derived from.
+      res.write(buildEvent(sourceId, state, error, source.characterCount));
     } catch {
       // Ignore parse/lookup errors
     }

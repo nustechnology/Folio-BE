@@ -185,9 +185,28 @@ const worker = new Worker(
   },
   {
     connection: redis,
-    concurrency: 2
+    concurrency: 2,
+    // The lock renews on a timer, so waiting (OCR, embeddings) is safe but
+    // holding the event loop is not — pdfjs layout reconstruction and the
+    // per-page marked/JSDOM pass both do, past the 30s default on a big file.
+    lockDuration: 120_000,
+    // A stall means the worker died, not that the job is bad. At the default of
+    // 1, one crash or a badly-timed redeploy fails the source permanently, as an
+    // UnrecoverableError that bypasses the queue's `attempts: 3`.
+    maxStalledCount: 3
   }
 );
+
+// A stalled job is reaped by a different worker, so the one that lost the lock
+// never reports anything — without this, "the worker vanished" is invisible.
+worker.on('stalled', (jobId) => {
+  logger.warn(
+    '[Worker] Job lock expired — worker died or blocked the event loop',
+    {
+      jobId
+    }
+  );
+});
 
 worker.on('completed', (job) => {
   logger.info(`[Worker] Job completed: ${job.id}`);
@@ -224,6 +243,25 @@ worker.on('failed', async (job, error) => {
 
 worker.on('error', (error) => {
   logger.error('[Worker] Ingestion worker error encountered', error);
+});
+
+// index.ts installs these for the API server; the worker had none, so a stray
+// rejection killed it silently and the job it held surfaced a minute later as a
+// stall. Cannot catch a native abort, but a JS-level crash now says so.
+process.on('uncaughtException', (e) => {
+  logger.error('[Worker] Uncaught exception', {
+    error: e instanceof Error ? e.message : String(e),
+    stack: e instanceof Error ? e.stack : undefined
+  });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (e) => {
+  logger.error('[Worker] Unhandled promise rejection', {
+    error: e instanceof Error ? e.message : String(e),
+    stack: e instanceof Error ? e.stack : undefined
+  });
+  process.exit(1);
 });
 
 logger.info(
