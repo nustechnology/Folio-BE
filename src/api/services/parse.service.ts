@@ -7,6 +7,7 @@ import { Marked } from 'marked';
 import type { MediaSink } from '~/api/services/media.service';
 import { runOcrOnPdf, runOcrOnPdfPages } from '~/api/services/ocr.service';
 import { htmlToText } from '~/api/utils/html-to-text.util';
+import { installPdfGlobals } from '~/api/utils/pdf-globals.util';
 import { escapeHtml, sanitizeSourceHtml } from '~/api/utils/source-html.util';
 import { env } from '~/config/enviroment';
 import logger from '~/config/logger';
@@ -622,6 +623,9 @@ const readPdfPages = async (
 };
 
 const extractFromPdf = async (buffer: Buffer) => {
+  // Before the import, not after: pdf.mjs constructs a DOMMatrix while it
+  // evaluates, so a missing global throws during the import itself.
+  installPdfGlobals();
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   // `getDocument` spins up a worker that outlives the returned document, and
   // the document proxy has no teardown of its own — releasing it means holding
