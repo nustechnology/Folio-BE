@@ -9,4 +9,11 @@ export type ListOptions = {
   sort: SpaceSort;
   page: number;
   limit: number;
+  archived?: boolean;
+};
+
+export type UpdateSpaceInput = {
+  name?: string;
+  researchObjective?: string;
+  isArchived?: boolean;
 };

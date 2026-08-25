@@ -167,3 +167,13 @@ export const SOURCE_FILE_NAME_MAX_LENGTH = 255;
 export const SOURCE_CONTENT_MIN_LENGTH = 10;
 export const SOURCE_CONTENT_MAX_LENGTH = 50_000;
 export const SOURCE_URL_MAX_LENGTH = 2048;
+
+/**
+ * How many sources have their stored objects purged at once when a space is
+ * deleted. Each source costs two S3 round-trips (the file, then its media
+ * prefix), and a space has no cap on how many sources it holds, so a serial
+ * loop would keep one request open for minutes on a large corpus. Bounded
+ * rather than unbounded: `Promise.all` over every source at once would open a
+ * connection per source against MinIO.
+ */
+export const STORAGE_CLEANUP_CONCURRENCY = 8;

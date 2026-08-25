@@ -15,7 +15,8 @@ import {
 import { spaceIdParamSchema } from '~/api/routes/validators/common.validator';
 import {
   createSpaceSchema,
-  listSpacesQuerySchema
+  listSpacesQuerySchema,
+  updateSpaceSchema
 } from '~/api/routes/validators/space.validator';
 
 const router = Router();
@@ -40,6 +41,23 @@ router.get(
   auth,
   validateParams(spaceIdParamSchema),
   asyncHandler(SpaceController.get)
+);
+
+router.patch(
+  '/:spaceId',
+  auth,
+  validateParams(spaceIdParamSchema),
+  validateBody(updateSpaceSchema),
+  asyncHandler(SpaceController.update)
+);
+
+// Permanent, and it takes the space's sources, notes, conversations and
+// notebook with it.
+router.delete(
+  '/:spaceId',
+  auth,
+  validateParams(spaceIdParamSchema),
+  asyncHandler(SpaceController.remove)
 );
 
 router.use('/:spaceId/notes', NoteRouter);
