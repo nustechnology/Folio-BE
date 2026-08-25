@@ -220,7 +220,6 @@ key with its default noted above it. Defaults live in
 
 | Variable | Note |
 | --- | --- |
-| `ENABLE_API_DOCS` | Serves Swagger UI only when exactly `true`. Unset in production |
 | `CORS_ORIGIN` | Blank in development means `http://localhost:3000` plus any HTTPS ngrok/Cloudflare tunnel origin. Required in production |
 | `MODEL_EMBEDDING_RPM` | Texts per minute, not HTTP calls. `0` disables the throttle, which is what the local model wants |
 | `DATABASE_URL` | Overridden inside Compose to the `db` hostname; only read by the Prisma CLI outside it |
@@ -308,6 +307,14 @@ JSON body.
 Base URL `http://localhost:4000/api/v1`. See `/api-docs` for the full surface
 with schemas and interactive examples — log in, select **Authorize** and paste
 the access token; Swagger adds the `Bearer` prefix itself.
+
+Swagger is served unconditionally, in every environment, and on the VPS it is
+public at <https://folio.nustechnology.com/api-docs> (spec at
+`/api-docs.json`). The OpenAPI document declares its server as `/`, so **Try it
+out** fires same-origin requests that Nginx routes to the backend — meaning
+requests run against **live production data**, not a sandbox. Anyone who can
+reach the domain can read the whole API surface; only the bearer token stops
+them calling the authenticated half of it.
 
 | Path | Purpose |
 | --- | --- |
@@ -409,8 +416,8 @@ in `.env` to keep Postgres, Redis and Ollama data outside the working tree
 (`/home/nus/srv/folio/data`); unset, it falls back to a gitignored `./data`.
 
 Provide `DATABASE_URL`, both token secrets, `CORS_ORIGIN`, `NODE_ENV=production`
-and `LOG_LEVEL=info` through the platform's secret store, leave
-`ENABLE_API_DOCS` unset, run `yarn db:migrate-prod` from a release job before
+and `LOG_LEVEL=info` through the platform's secret store, run
+`yarn db:migrate-prod` from a release job before
 starting the new version — `docker-compose.prod.yml` does this as the one-shot
 `folio-migrate` service — terminate HTTPS at the edge, and point health checks
 at `/health`.
