@@ -12,9 +12,6 @@ Everything runs in Docker. Ollama is the one exception — it stays on the host,
 because Docker Desktop gives containers no Metal access and a containerised
 Ollama is dramatically slower.
 
-> **Credentials.** Nothing secret is committed. The chat-model key and the
-> Gemini OCR key are handed out individually — **contact SamHT**.
-
 ---
 
 ## Prerequisites
@@ -28,38 +25,57 @@ The reference development environment is macOS on Apple Silicon:
 | Node.js | 22.17.1 (`.nvmrc`) | `nvm install 22.17.1` |
 | Yarn | 4.12.0 (Berry) | `corepack enable && corepack prepare yarn@4.12.0 --activate` |
 
-Node and Yarn are needed only so your editor can resolve types — the app itself
-always runs in a container.
+Node and Yarn are only so your editor can resolve types — the app itself always
+runs in a container.
 
 ---
 
-## One-time setup
+## Setup
 
-### 1. Install the embedding model
+### 1. Clone and install
 
 ```bash
-brew install ollama
+git clone git@github.com:nustechnology/Folio-BE.git
+cd Folio-BE
+nvm use
+yarn install
+```
+
+`yarn install` is for your editor's TypeScript server; the container installs
+its own dependencies.
+
+### 2. Start Ollama and pull the embedding model
+
+```bash
 brew services start ollama
 ollama pull bge-m3
 ollama list                    # bge-m3 must appear
 ```
 
-`bge-m3` is not interchangeable. `Passage.embedding` is `vector(1024)` (set by
-migration `20260811120000_embedding_model_bge_m3`) and the API **refuses to
-start** if `MODEL_EMBEDDING_DIMENSIONS` disagrees with that column. Swapping the
-embedding model means a migration altering the column *and* a full re-index —
-vectors from different models are not comparable.
+`bge-m3` is not interchangeable. `Passage.embedding` is `vector(1024)` and the
+API refuses to start if `MODEL_EMBEDDING_DIMENSIONS` disagrees with that column.
+Changing the embedding model needs a migration on the column and a full
+re-index — vectors from different models are not comparable.
 
-Answer generation is separate: it goes to a hosted OpenAI-compatible endpoint,
-configured below.
+Answer generation does not use Ollama; it goes to a hosted endpoint, next.
 
-### 2. Configure the environment
+### 3. Get the two API keys
+
+| Variable | Where to get it |
+| --- | --- |
+| `MODEL_CHAT_API_KEY` | Your personal API key from **[llm.nustechnology.com](https://llm.nustechnology.com)** — sign in and create one under your account. Serves `mimo-v2.5`, which generates the answers. |
+| `GEMINI_API_KEY` | Your personal Google Gemini API key from **[aistudio.google.com/apikey](https://aistudio.google.com/apikey)**. Used for OCR on scanned PDF pages, via `gemini-3.6-flash`. |
+
+Both are personal keys — do not share one between developers, and never commit
+them.
+
+### 4. Configure the environment
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in the `REQUIRED` block at the top of the file — everything below it has a
+Fill in the `REQUIRED` block at the top. Everything below it already has a
 working default:
 
 ```bash
@@ -71,44 +87,32 @@ POSTGRES_DB=folio-db
 JWT_TOKEN_SECRET=
 REFRESH_TOKEN_SECRET=
 
-# Both base URLs must be set to the same hosted value — see the warning below.
+# Set both base URLs to the same value.
 MODEL_CHAT_BASE_URL=https://llm.nustechnology.com/v1
 MODEL_CHAT_BASE_URL_DOCKER=https://llm.nustechnology.com/v1
-MODEL_CHAT_API_KEY=<ask SamHT>
+MODEL_CHAT_API_KEY=<your llm.nustechnology.com key>
 MODEL_CHAT_MODEL=mimo-v2.5
 
-GEMINI_API_KEY=<ask SamHT>
+GEMINI_API_KEY=<your Gemini key>
 SEED_USER_PASSWORD=password123
 ```
 
-> **`MODEL_CHAT_BASE_URL_DOCKER` is not optional.** Compose's `environment:`
-> block overrides `MODEL_CHAT_BASE_URL` with the `_DOCKER` variant, which falls
-> back to host Ollama. Set only the plain one and containers send chat
-> completions to Ollama, which does not serve `mimo-v2.5` — Ask then fails with
-> a connection or 404 error that names neither the setting nor the model.
+`MODEL_CHAT_BASE_URL_DOCKER` is what containers actually use — Compose
+overrides `MODEL_CHAT_BASE_URL` with it, and its fallback is host Ollama. Set
+both to the same value or Ask will send completions to Ollama, which does not
+serve `mimo-v2.5`.
 
-Two more rules for this file: never commit it, and never put a `#` comment on
-the same line as a value. Compose reads `.env` too, and for an empty key it
-takes the trailing comment as the value.
+Never put a `#` comment on the same line as a value. Compose reads this file
+too, and for an empty key it takes the trailing comment as the value.
 
-### 3. Install dependencies for your editor
-
-```bash
-nvm use
-yarn install
-```
-
-The container installs its own dependencies; this is only so the TypeScript
-server in your editor can resolve imports.
-
-### 4. Build and start
+### 5. Build and start
 
 ```bash
 docker compose up -d --build
-docker compose ps          # api, worker, db, redis, minio — all healthy
+docker compose ps          # api, worker, db, redis, minio
 ```
 
-### 5. Apply migrations and seed
+### 6. Apply migrations
 
 Migrations are not applied on boot.
 
@@ -116,40 +120,28 @@ Migrations are not applied on boot.
 docker compose exec api yarn db:migrate
 ```
 
-It should end with `Your database is now in sync with your schema.` and create
-no files. If it instead asks you to name a new migration, stop — see
-[Troubleshooting](#troubleshooting).
+Ends with `Your database is now in sync with your schema.`
 
-Optional demo data — six spaces, and four ingested sources with embeddings:
+### 7. Seed demo data (optional)
 
 ```bash
-docker compose exec api yarn db:seed
-docker compose exec api yarn db:seed:ask
+docker compose exec api yarn db:seed        # six spaces
+docker compose exec api yarn db:seed:ask    # four sources, then Ctrl-C
 ```
 
-`db:seed:ask` creates four sources and queues them; the worker then extracts,
-chunks and embeds them through Ollama, which takes a minute or two on first run.
-
-It does not exit on its own — it holds the BullMQ Redis connection open after
-its work is done, so press Ctrl-C once the four sources are listed. Confirm they
-finished with:
+`db:seed:ask` queues four sources for the worker to extract, chunk and embed —
+a minute or two on first run. It holds the Redis connection open after
+finishing, so press Ctrl-C once the sources are listed. Confirm with:
 
 ```bash
-docker compose logs worker | grep 'Ingestion job fully completed'
+docker compose logs worker | grep -c 'Ingestion job fully completed'   # 4
 ```
 
-### 6. Verify
+### 8. Verify
 
 ```bash
 curl localhost:4000/health
 open http://localhost:4000/api-docs
-```
-
-Then add a source through the API and confirm it moves from `added` to `ready`
-in the worker log — that exercises parse, chunk, embed and index end to end:
-
-```bash
-docker compose logs -f worker
 ```
 
 ---
@@ -157,21 +149,16 @@ docker compose logs -f worker
 ## Daily use
 
 ```bash
-docker compose up -d          # start everything
+docker compose up -d          # start
 docker compose logs -f api worker
-docker compose ps
 docker compose restart api
 docker compose down           # stop, keep data
 ```
 
-`src/` is bind-mounted, so edits on the host restart `tsx watch` inside the
-container. Changing `package.json` needs a rebuild:
+`src/` is bind-mounted, so edits on the host restart `tsx watch` in the
+container. Changing `package.json` needs `docker compose up -d --build`.
 
-```bash
-docker compose up -d --build
-```
-
-To wipe the database, MinIO objects and the Redis queue:
+Start over from an empty database:
 
 ```bash
 docker compose down -v
@@ -190,32 +177,28 @@ docker compose exec api yarn db:migrate
 | `minio` | `localhost:9000`, console `:9001` | Uploaded files and extracted media |
 
 Host ports come from `POSTGRES_PORT`, `REDIS_PORT`, `MINIO_API_PORT` and
-`MINIO_CONSOLE_PORT`; change them in `.env` if something already holds one.
+`MINIO_CONSOLE_PORT` in `.env`.
 
 ---
 
 ## Commands
 
-All commands run inside the `api` container:
-
-```bash
-docker compose exec api yarn <command>
-```
+All run inside the `api` container — `docker compose exec api yarn <command>`:
 
 | Command | Purpose |
 | --- | --- |
-| `yarn db:migrate` | `prisma migrate dev` — apply migrations, create one when the schema changed |
-| `yarn db:migrate-prod` | `prisma migrate deploy` — committed migrations only, used in deployment |
-| `yarn db:generate` | Regenerate Prisma Client into `src/generated/prisma` |
-| `yarn db:seed` | Seed spaces |
-| `yarn db:seed:ask` | Seed ingested sources with embeddings |
-| `yarn reingest` | Re-index every source against the current embedding model (`--help` for filters, `--reextract`, `--dry-run`) |
-| `yarn test` | Vitest, single run |
-| `yarn typecheck` | `tsc --noEmit`, tests included |
-| `yarn lint` | ESLint on `src/**/*.ts`, autofix |
-| `yarn build` | Compile to `dist/` |
+| `db:migrate` | `prisma migrate dev` — apply migrations, create one when the schema changed |
+| `db:migrate-prod` | `prisma migrate deploy` — committed migrations only, used in deployment |
+| `db:generate` | Regenerate Prisma Client into `src/generated/prisma` |
+| `db:seed` | Seed spaces |
+| `db:seed:ask` | Seed ingested sources with embeddings |
+| `reingest` | Re-index every source against the current embedding model (`--help` for filters, `--reextract`, `--dry-run`) |
+| `test` | Vitest, single run |
+| `typecheck` | `tsc --noEmit`, tests included |
+| `lint` | ESLint on `src/**/*.ts`, autofix |
+| `build` | Compile to `dist/` |
 
-There is no CI — run lint, typecheck and tests before pushing:
+There is no CI — before pushing:
 
 ```bash
 docker compose exec api sh -c "yarn lint && yarn typecheck && yarn test"
@@ -229,8 +212,6 @@ docker compose exec api sh -c "yarn lint && yarn typecheck && yarn test"
 key with its default noted above it. Defaults live in
 `src/config/enviroment.ts`.
 
-A few worth knowing:
-
 | Variable | Note |
 | --- | --- |
 | `ENABLE_API_DOCS` | Serves Swagger UI only when exactly `true`. Unset in production |
@@ -238,60 +219,6 @@ A few worth knowing:
 | `MODEL_EMBEDDING_RPM` | Texts per minute, not HTTP calls. `0` disables the throttle, which is what the local model wants |
 | `DATABASE_URL` | Overridden inside Compose to the `db` hostname; only read by the Prisma CLI outside it |
 | `MINIO_*`, `REDIS_*` | Compose points these at its own services; the defaults already agree |
-
----
-
-## Troubleshooting
-
-| Symptom | Cause |
-| --- | --- |
-| `Missing required environment variable(s)` | `JWT_TOKEN_SECRET` / `REFRESH_TOKEN_SECRET` unset |
-| Startup error naming `MODEL_EMBEDDING_DIMENSIONS` | It disagrees with the `vector(1024)` column — keep it 1024 for `bge-m3` |
-| `db` container will not start | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` are blank; Compose has no defaults for them |
-| Ask fails, ingestion is fine | `MODEL_CHAT_BASE_URL_DOCKER` unset, so chat went to Ollama |
-| Ingestion fails at the embedding step | Ollama is not running on the host, or `bge-m3` was never pulled |
-| Sources stay in `added` | The `worker` container is down — `docker compose ps` |
-| A config value looks like `# default: ...` | An inline comment in `.env` on an otherwise empty key |
-| `port is already allocated` | Change `POSTGRES_PORT`, `REDIS_PORT` or `MINIO_API_PORT` in `.env` |
-| `/api-docs` returns 404 | `ENABLE_API_DOCS` is not exactly `true` |
-| `db:migrate` asks you to name a new migration | `schema.prisma` has drifted from the migrations — see below |
-| `P3018` / `column "searchVector" ... is a generated column` | A drift migration was generated and applied — see below |
-
-### `db:migrate` wants to create a migration
-
-On a clean checkout it should never do this. When it does, `schema.prisma` no
-longer describes what the migrations build, and the migration Prisma offers to
-write may be wrong — the `Passage` table carries a `GENERATED ALWAYS` column and
-two raw-SQL indexes (HNSW, GIN) that Prisma cannot express natively, so drift
-there tends to produce `DROP INDEX` statements and an
-`ALTER COLUMN "searchVector" DROP DEFAULT` that Postgres rejects outright.
-Accepting leaves a failed entry in `_prisma_migrations`, after which every later
-migration fails with `P3018`.
-
-Answer **no** to the prompt, and inspect the drift instead:
-
-```bash
-docker compose exec api npx prisma migrate diff \
-  --from-config-datasource --to-schema src/prisma/schema.prisma --script
-```
-
-`-- This is an empty migration.` means there is no drift. Anything else is the
-SQL Prisma wanted to run, and is the thing to fix in `schema.prisma`.
-
-If a bad migration was already applied, delete the generated directory and
-rebuild the database:
-
-```bash
-git status --short src/prisma/migrations     # find the new timestamped dir
-rm -rf src/prisma/migrations/<generated-dir>
-
-docker compose down -v
-docker compose up -d
-docker compose exec api yarn db:migrate
-```
-
-`down -v` discards local database, MinIO and Redis data, which on a development
-machine is the cleanest way to clear the failed entry in `_prisma_migrations`.
 
 ---
 
@@ -424,6 +351,11 @@ Conventions:
 - Treat `src/generated/prisma` as a build artifact — change the schema and
   regenerate.
 - Commit migration directories; never run `migrate dev` against production.
+
+`Passage` carries two things Prisma cannot express natively: `searchVector` is a
+Postgres `GENERATED ALWAYS` column, and its two indexes are HNSW and GIN. Both
+are declared in the schema anyway — as a `dbgenerated()` default and as plain
+`@@index` entries — so that `migrate dev` sees no drift. Leave them in place.
 
 ---
 

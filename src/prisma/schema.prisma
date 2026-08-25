@@ -90,8 +90,7 @@ model Source {
 
   @@index([researchSpaceId])
   @@index([originalNoteId])
-  // Ingestion looks a file up by checksum before parsing, so this is read once
-  // per uploaded file whether or not a match exists.
+  // Ingestion looks a file up by checksum before parsing.
   @@index([fileHash])
 }
 
@@ -101,12 +100,9 @@ model Passage {
   source          Source                      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   content         String
   embedding       Unsupported("vector(1024)")
-  // Postgres GENERATED ALWAYS ... STORED column, added by raw SQL in migration
-  // 20260803023353_add_search_vector. Prisma cannot express a generated column,
-  // so the expression is declared here as a database-level default. Without it
-  // `prisma migrate dev` sees drift on every run and emits
-  // `ALTER COLUMN "searchVector" DROP DEFAULT`, which Postgres rejects with
-  // "column ... is a generated column" and leaves a failed migration behind.
+  // A GENERATED ALWAYS ... STORED column in Postgres. Prisma cannot express
+  // that, so the expression is declared as a default — without it every
+  // `migrate dev` drifts and emits SQL Postgres rejects.
   searchVector    Unsupported("tsvector")     @default(dbgenerated("to_tsvector('english'::regconfig, content)"))
   tokenCount      Int
   strategyVersion String
@@ -114,12 +110,9 @@ model Passage {
   createdAt       DateTime                    @default(now())
 
   @@index([sourceId])
-  // Both indexes are created by raw SQL: `Passage_embedding_idx` is HNSW with
-  // vector_cosine_ops (migration 20260811120000_embedding_model_bge_m3) and
-  // `Passage_searchVector_idx` is GIN. Prisma cannot express an HNSW method,
-  // but declaring the indexes keeps their names in the model so migrate stops
-  // trying to DROP them — an unnoticed drop would silently degrade retrieval to
-  // sequential scans.
+  // Created by raw SQL as HNSW (vector_cosine_ops) and GIN. Prisma cannot
+  // express those methods; declaring the indexes keeps migrate from dropping
+  // them, which would silently degrade retrieval to sequential scans.
   @@index([embedding])
   @@index([searchVector], type: Gin)
 }
@@ -145,8 +138,7 @@ model Note {
   researchSpace        ResearchSpace @relation(fields: [researchSpaceId], references: [id])
   title                String
   content              String
-  /// Plain-text projection of `content`, derived server-side on write. Search
-  /// runs against this so a query cannot match the markup's tag names.
+  /// Plain-text projection of `content`, so search cannot match tag names.
   contentText          String        @default("")
   originType           OriginType
   originConversationId String?
@@ -180,9 +172,8 @@ model Citation {
   paragraphReference String?
   sectionReference   String?
   passageLocator     String?
-  /// Passage the citation was drawn from. Deliberately not a foreign key:
-  /// re-ingesting a source replaces its passages, and a saved note must keep
-  /// its evidence even when the id it points at no longer resolves.
+  /// Not a foreign key: re-ingesting replaces passages, and a saved note must
+  /// keep its evidence even once this id no longer resolves.
   passageId          String?
   createdAt          DateTime @default(now())
 
@@ -196,9 +187,8 @@ model NoteCitation {
   note       Note     @relation(fields: [noteId], references: [id])
   citationId String
   citation   Citation @relation(fields: [citationId], references: [id], onDelete: Cascade)
-  /// Rank the citation held in the answer it was saved from. The note body
-  /// carries plain `[n]` markers, so this is what makes marker *n* resolvable
-  /// back to a row — a set with no order would resolve them arbitrarily.
+  /// Rank in the answer it was saved from — resolves the note body's `[n]`
+  /// markers, which would otherwise map to rows arbitrarily.
   position   Int      @default(0)
 
   @@id([noteId, citationId])
