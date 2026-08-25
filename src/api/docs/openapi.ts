@@ -367,6 +367,17 @@ export const openApiDocument = {
               maximum: 100,
               default: 10
             }
+          },
+          {
+            name: 'archived',
+            in: 'query',
+            required: false,
+            description:
+              'Return archived spaces instead of active ones. The two sets are disjoint — there is no view that shows both.',
+            schema: {
+              type: 'boolean',
+              default: false
+            }
           }
         ],
         responses: {
@@ -422,6 +433,109 @@ export const openApiDocument = {
           '401': { $ref: '#/components/responses/Unauthorized' },
           '404': { $ref: '#/components/responses/SpaceNotFound' },
           '500': { $ref: '#/components/responses/InternalError' }
+        }
+      },
+      patch: {
+        tags: ['Spaces'],
+        summary: 'Update a research space',
+        description:
+          "Updates a space's name, research objective, and/or archived state. At least one field is required. Omitted fields are left untouched; an explicit empty `researchObjective` clears it. Archiving removes the space from the default list without deleting anything — `GET /spaces?archived=true` lists archived spaces, and setting `isArchived` back to false restores it.",
+        operationId: 'updateSpace',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/UpdateSpaceRequest'
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: 'Space updated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/CreateSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description:
+              'Validation error: empty body, blank name, name over 100 characters, or objective over 500 characters',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/SpaceNotFound' },
+          '409': {
+            description:
+              'Another space of this owner already uses the name, compared case-insensitively (code: SPACE_NAME_EXISTS). Renaming a space to the name it already holds is not a conflict.',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      },
+      delete: {
+        tags: ['Spaces'],
+        summary: 'Delete a research space',
+        description:
+          "Permanently deletes the space and everything under it — every source (with its indexed passages, citations, uploaded file and extracted images), every note, every conversation, and the notebook. This cannot be undone; archive the space instead (`PATCH` with `isArchived: true`) to hide it without losing anything. Stored files are removed before the database rows, and a storage failure aborts the delete with `503 STORAGE_CLEANUP_FAILED` rather than dropping the rows — the space is left intact and the request can be retried safely.",
+        operationId: 'deleteSpace',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
+        responses: {
+          '200': {
+            description: 'Space and all of its contents deleted',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/DeleteSpaceSuccessResponse'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Validation error (space id is not a UUID)',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/SpaceNotFound' },
+          '429': { $ref: '#/components/responses/TooManyRequests' },
+          '500': { $ref: '#/components/responses/InternalError' },
+          '503': {
+            description:
+              'Object storage could not be reached, so no rows were deleted (code: STORAGE_CLEANUP_FAILED). The space is unchanged and the request is safe to retry.',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2551,6 +2665,55 @@ export const openApiDocument = {
           }
         }
       },
+      UpdateSpaceRequest: {
+        type: 'object',
+        additionalProperties: false,
+        minProperties: 1,
+        description:
+          'At least one field must be present. Any field left out is unchanged.',
+        properties: {
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 100,
+            description: 'New space name (1-100 characters, trimmed)',
+            example: 'AI Ethics Research (2026)'
+          },
+          researchObjective: {
+            type: 'string',
+            maxLength: 500,
+            description:
+              'New research objective (max 500 characters). Send an empty string to clear it.',
+            example: 'Explore ethical frameworks for AI decision-making.'
+          },
+          isArchived: {
+            type: 'boolean',
+            description:
+              'Archive (true) or restore (false) the space. Archived spaces are excluded from the default space list.',
+            example: true
+          }
+        }
+      },
+      DeleteSpaceSuccessResponse: {
+        type: 'object',
+        required: ['status', 'data'],
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['success']
+          },
+          data: {
+            type: 'object',
+            required: ['deleted'],
+            properties: {
+              deleted: {
+                type: 'boolean',
+                enum: [true]
+              }
+            }
+          }
+        }
+      },
       CreateSpaceSuccessResponse: {
         type: 'object',
         required: ['status', 'data'],
@@ -3825,6 +3988,7 @@ export const openApiDocument = {
               'INVALID_FILE_SIGNATURE',
               'FILE_TOO_LARGE',
               'FILE_UPLOAD_FAILED',
+              'STORAGE_CLEANUP_FAILED',
               'EMBEDDING_FAILED',
               'GENERATION_FAILED',
               'CONVERSATION_NOT_FOUND',

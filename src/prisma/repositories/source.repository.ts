@@ -96,6 +96,17 @@ const countBySpaceId = async (spaceId: string) => {
   return prisma.source.count({ where: { researchSpaceId: spaceId } });
 };
 
+// The columns a space-wide delete needs to clean up object storage: the stored
+// file to remove and the id its extracted-media prefix is built from. Nothing
+// else is loaded — a space can hold a large corpus, and the rows are dropped by
+// a bulk statement immediately afterwards.
+const findStorageRefsBySpaceId = async (spaceId: string) => {
+  return prisma.source.findMany({
+    where: { researchSpaceId: spaceId },
+    select: { id: true, sourceType: true, sourceUrl: true }
+  });
+};
+
 // Sources to re-index, oldest first. Only light columns, so a large corpus
 // isn't pulled into memory at once; text is loaded per source as it runs.
 const findManyForReindex = async (filter: {
@@ -204,6 +215,7 @@ export default {
   updateClearingPassages,
   deleteById,
   countBySpaceId,
+  findStorageRefsBySpaceId,
   findByOriginalNoteId,
   findReusableExtraction,
   findManyByOwnerId
