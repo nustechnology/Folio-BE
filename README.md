@@ -114,7 +114,28 @@ Migrations are not applied on boot.
 
 ```bash
 docker compose exec api yarn db:migrate
-docker compose exec api yarn db:seed:all      # optional demo data
+```
+
+It should end with `Your database is now in sync with your schema.` and create
+no files. If it instead asks you to name a new migration, stop — see
+[Troubleshooting](#troubleshooting).
+
+Optional demo data — six spaces, and four ingested sources with embeddings:
+
+```bash
+docker compose exec api yarn db:seed
+docker compose exec api yarn db:seed:ask
+```
+
+`db:seed:ask` creates four sources and queues them; the worker then extracts,
+chunks and embeds them through Ollama, which takes a minute or two on first run.
+
+It does not exit on its own — it holds the BullMQ Redis connection open after
+its work is done, so press Ctrl-C once the four sources are listed. Confirm they
+finished with:
+
+```bash
+docker compose logs worker | grep 'Ingestion job fully completed'
 ```
 
 ### 6. Verify
@@ -183,11 +204,11 @@ docker compose exec api yarn <command>
 
 | Command | Purpose |
 | --- | --- |
-| `yarn db:migrate` | `prisma migrate dev` — create/apply dev migrations |
-| `yarn db:migrate-prod` | `prisma migrate deploy` — committed migrations only |
+| `yarn db:migrate` | `prisma migrate dev` — apply migrations, create one when the schema changed |
+| `yarn db:migrate-prod` | `prisma migrate deploy` — committed migrations only, used in deployment |
 | `yarn db:generate` | Regenerate Prisma Client into `src/generated/prisma` |
-| `yarn db:reset` | Drop and re-apply everything, no seed |
-| `yarn db:seed` / `yarn db:seed:all` | Seed spaces / spaces + ask data |
+| `yarn db:seed` | Seed spaces |
+| `yarn db:seed:ask` | Seed ingested sources with embeddings |
 | `yarn reingest` | Re-index every source against the current embedding model (`--help` for filters, `--reextract`, `--dry-run`) |
 | `yarn test` | Vitest, single run |
 | `yarn typecheck` | `tsc --noEmit`, tests included |
@@ -233,6 +254,44 @@ A few worth knowing:
 | A config value looks like `# default: ...` | An inline comment in `.env` on an otherwise empty key |
 | `port is already allocated` | Change `POSTGRES_PORT`, `REDIS_PORT` or `MINIO_API_PORT` in `.env` |
 | `/api-docs` returns 404 | `ENABLE_API_DOCS` is not exactly `true` |
+| `db:migrate` asks you to name a new migration | `schema.prisma` has drifted from the migrations — see below |
+| `P3018` / `column "searchVector" ... is a generated column` | A drift migration was generated and applied — see below |
+
+### `db:migrate` wants to create a migration
+
+On a clean checkout it should never do this. When it does, `schema.prisma` no
+longer describes what the migrations build, and the migration Prisma offers to
+write may be wrong — the `Passage` table carries a `GENERATED ALWAYS` column and
+two raw-SQL indexes (HNSW, GIN) that Prisma cannot express natively, so drift
+there tends to produce `DROP INDEX` statements and an
+`ALTER COLUMN "searchVector" DROP DEFAULT` that Postgres rejects outright.
+Accepting leaves a failed entry in `_prisma_migrations`, after which every later
+migration fails with `P3018`.
+
+Answer **no** to the prompt, and inspect the drift instead:
+
+```bash
+docker compose exec api npx prisma migrate diff \
+  --from-config-datasource --to-schema src/prisma/schema.prisma --script
+```
+
+`-- This is an empty migration.` means there is no drift. Anything else is the
+SQL Prisma wanted to run, and is the thing to fix in `schema.prisma`.
+
+If a bad migration was already applied, delete the generated directory and
+rebuild the database:
+
+```bash
+git status --short src/prisma/migrations     # find the new timestamped dir
+rm -rf src/prisma/migrations/<generated-dir>
+
+docker compose down -v
+docker compose up -d
+docker compose exec api yarn db:migrate
+```
+
+`down -v` discards local database, MinIO and Redis data, which on a development
+machine is the cleanest way to clear the failed entry in `_prisma_migrations`.
 
 ---
 

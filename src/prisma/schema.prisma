@@ -101,13 +101,27 @@ model Passage {
   source          Source                      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   content         String
   embedding       Unsupported("vector(1024)")
-  searchVector    Unsupported("tsvector")
+  // Postgres GENERATED ALWAYS ... STORED column, added by raw SQL in migration
+  // 20260803023353_add_search_vector. Prisma cannot express a generated column,
+  // so the expression is declared here as a database-level default. Without it
+  // `prisma migrate dev` sees drift on every run and emits
+  // `ALTER COLUMN "searchVector" DROP DEFAULT`, which Postgres rejects with
+  // "column ... is a generated column" and leaves a failed migration behind.
+  searchVector    Unsupported("tsvector")     @default(dbgenerated("to_tsvector('english'::regconfig, content)"))
   tokenCount      Int
   strategyVersion String
   locator         Json
   createdAt       DateTime                    @default(now())
 
   @@index([sourceId])
+  // Both indexes are created by raw SQL: `Passage_embedding_idx` is HNSW with
+  // vector_cosine_ops (migration 20260811120000_embedding_model_bge_m3) and
+  // `Passage_searchVector_idx` is GIN. Prisma cannot express an HNSW method,
+  // but declaring the indexes keeps their names in the model so migrate stops
+  // trying to DROP them — an unnoticed drop would silently degrade retrieval to
+  // sequential scans.
+  @@index([embedding])
+  @@index([searchVector], type: Gin)
 }
 
 model Conversation {
