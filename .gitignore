@@ -30,3 +30,7 @@ dockerdb
 !.yarn/versions
 
 /uploads
+
+# Bind-mount target for docker-compose.prod.yml when FOLIO_DATA_DIR is unset.
+# On the VPS it points outside the repo instead.
+/data

@@ -1,0 +1,188 @@
+# Folio backend — production stack, run from this repo on the VPS.
+#
+#   cd ~/srv/folio/Folio-BE
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# There is deliberately no plain `docker-compose.yml` in this repo: a bare
+# `docker compose up` has to fail with "no configuration file provided" rather
+# than quietly starting the development stack on the server.
+#
+# The frontend is NOT here. It builds from the Folio-Web repo and is brought up
+# by that repo's docker-compose.prod.yml. The two stacks meet only on
+# shared-network, where Nginx routes to each by container name; the browser
+# calls the API through a relative /api/v1, so the frontend never resolves
+# folio-backend over Docker DNS.
+name: folio
+
+# API and ingestion worker are the same image with the same wiring; only the
+# command differs. Without the worker, uploaded sources are accepted but never
+# leave `added` state — the BullMQ `ingestion` queue has no consumer.
+x-folio-backend: &folio-backend
+  build:
+    context: .
+    target: runner
+  image: folio-backend:latest
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    # Deployment-specific values only. NODE_ENV, PORT and MULTER_TEMP_DIR are
+    # set by the image; repeating them here would be duplication.
+    DATABASE_URL: postgresql://${FOLIO_DB_USER}:${FOLIO_DB_PASSWORD}@folio-db:5432/${FOLIO_DB_NAME}
+    REDIS_HOST: folio-redis
+    REDIS_PORT: "6379"
+    MINIO_ENDPOINT: shared-minio
+    MINIO_PORT: "9000"
+    MINIO_USE_SSL: "false"
+    # enviroment.ts leaves CORS_ORIGIN empty in production when nothing is
+    # set, which rejects every browser request.
+    CORS_ORIGIN: https://${FOLIO_DOMAIN}
+  volumes:
+    - ${FOLIO_DATA_DIR:-./data}/backend-tmp:/app/tmp
+  depends_on:
+    folio-db:
+      condition: service_healthy
+    folio-redis:
+      condition: service_healthy
+    # Both the API and the worker embed text: the worker at ingestion
+    # (chunking.service.ts), the API on every question (retrieval.service.ts).
+    # Neither can do useful work before the model is loadable.
+    folio-ollama:
+      condition: service_healthy
+    folio-migrate:
+      condition: service_completed_successfully
+
+services:
+  # ---- reachable from nginx ----------------------------------------------
+
+  folio-backend:
+    <<: *folio-backend
+    container_name: folio-backend
+    networks:
+      - shared-network    # nginx reaches it here; also its route to shared-minio
+      - folio-internal    # folio-db + folio-redis
+
+  # ---- internal ------------------------------------------------------------
+
+  folio-worker:
+    <<: *folio-backend
+    container_name: folio-worker
+    command: ["node", "dist/workers/ingestion.worker.js"]
+    # On shared-network only because shared-minio lives there. It serves no
+    # HTTP and no vhost points at it.
+    networks:
+      - shared-network
+      - folio-internal
+    # Overrides the image's HEALTHCHECK, which probes /health — an endpoint the
+    # worker process does not serve.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ingestion.worker.js > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  # One-shot migration job, run from the builder stage because the runtime
+  # image ships without the Prisma CLI. Its own service rather than an
+  # entrypoint step, so API and worker cannot race to apply the same
+  # migrations on a cold start. Migration 20260803022112_add_passages runs
+  # CREATE EXTENSION vector, which succeeds because FOLIO_DB_USER is this
+  # instance's superuser.
+  folio-migrate:
+    build:
+      context: .
+      target: builder
+    image: folio-backend-migrate:latest
+    container_name: folio-migrate
+    # The one intentional exception to the restart policy: a job that must run
+    # to completion once, not a service.
+    restart: "no"
+    command: ["yarn", "db:migrate-prod"]
+    environment:
+      # Needed here — the builder stage has none of the runner stage's ENV.
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${FOLIO_DB_USER}:${FOLIO_DB_PASSWORD}@folio-db:5432/${FOLIO_DB_NAME}
+    networks:
+      - folio-internal
+    depends_on:
+      folio-db:
+        condition: service_healthy
+
+  # pgvector, not stock postgres: schema.prisma declares extensions = [vector]
+  # and Passage.embedding is vector(1024). Folio's own instance, so the shared
+  # postgres:18-alpine is left completely alone.
+  folio-db:
+    image: pgvector/pgvector:pg16
+    container_name: folio-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${FOLIO_DB_USER}
+      POSTGRES_PASSWORD: ${FOLIO_DB_PASSWORD}
+      POSTGRES_DB: ${FOLIO_DB_NAME}
+    volumes:
+      - ${FOLIO_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+    networks:
+      - folio-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FOLIO_DB_USER} -d ${FOLIO_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  # Per-app rather than shared: BullMQ works across the whole keyspace, and
+  # Redis's only isolation is numbered databases — too weak between projects.
+  folio-redis:
+    image: redis:7-alpine
+    container_name: folio-redis
+    restart: unless-stopped
+    # Job state is worth keeping across restarts.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${FOLIO_DATA_DIR:-./data}/redis:/data
+    networks:
+      - folio-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Local embedding model. bge-m3 returns 1024 dimensions, matching the
+  # Passage.embedding column exactly, so no migration is needed. Measured on
+  # this box: ~2.4s to load the model, then ~80ms per text.
+  #
+  # Internal only — nothing outside this stack should reach it, and no host
+  # port is published. The API and worker address it as folio-ollama:11434.
+  folio-ollama:
+    image: ollama/ollama:latest
+    container_name: folio-ollama
+    restart: unless-stopped
+    environment:
+      # Keep the model resident. Ollama unloads after 5 minutes idle by
+      # default, and a cold reload costs ~2.4s — paid by whoever asks the
+      # first question after a quiet spell, since retrieval.service.ts embeds
+      # every query before searching. Costs ~2GB of RAM to avoid that.
+      OLLAMA_KEEP_ALIVE: "-1"
+    volumes:
+      # The pulled model lives here, so it survives container recreation and
+      # is not re-downloaded on every deploy.
+      - ${FOLIO_DATA_DIR:-./data}/ollama:/root/.ollama
+    networks:
+      - folio-internal
+    healthcheck:
+      # `ollama list` succeeds once the server is accepting requests. It does
+      # not verify the model is pulled — see the note in the runbook.
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+
+networks:
+  # Created and owned by the shared-services stack.
+  shared-network:
+    external: true
+  # Private to Folio.
+  folio-internal:
+    driver: bridge

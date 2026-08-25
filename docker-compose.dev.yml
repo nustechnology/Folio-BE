@@ -1,8 +1,15 @@
+# Local development. Named explicitly so it can never collide with the `folio`
+# project that docker-compose.prod.yml brings up on the VPS.
+name: folio-dev
+
 # api and worker are the same image with the same wiring; only the published
 # port and the command differ.
 x-folio-service: &folio-service
   build:
     context: .
+    # The Dockerfile's default stage is `runner`, the production image. Dev has
+    # to name its stage: source tree, devDependencies and tsx watch.
+    target: dev
   restart: unless-stopped
   env_file:
     - .env

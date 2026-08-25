@@ -112,6 +112,12 @@ docker compose up -d --build
 docker compose ps          # api, worker, db, redis, minio
 ```
 
+Every `docker compose` command below is bare because `.env` sets
+`COMPOSE_FILE=docker-compose.dev.yml`. The repo ships no plain
+`docker-compose.yml`, so if that line is missing Compose answers "no
+configuration file provided" rather than guessing an environment. Pass
+`-f docker-compose.dev.yml` explicitly if you would rather not set it.
+
 ### 6. Apply migrations
 
 Migrations are not applied on boot.
@@ -290,9 +296,9 @@ JSON body.
 │   │   ├── repositories          # database access
 │   │   └── seeds
 │   └── generated/prisma          # build artifact — never edit
-├── Dockerfile                    # local development image
-├── Dockerfile.prod               # production image
-└── docker-compose.yml
+├── Dockerfile                    # every environment — stages: deps, dev, builder, runner
+├── docker-compose.dev.yml        # local stack: api, worker, db, redis, minio
+└── docker-compose.prod.yml       # VPS stack: adds migrate + ollama, uses shared MinIO
 ```
 
 ---
@@ -381,11 +387,32 @@ URLs, or sensitive request bodies.
 
 ## Deployment
 
-Production is built from `Dockerfile.prod` — the plain `Dockerfile` is the
-development image used above. Provide `DATABASE_URL`, both token secrets,
-`CORS_ORIGIN`, `NODE_ENV=production` and `LOG_LEVEL=info` through the
-platform's secret store, leave `ENABLE_API_DOCS` unset, run
-`yarn db:migrate-prod` from a release job before starting the new version,
-terminate HTTPS at the edge, and point health checks at `/health`.
+One `Dockerfile` serves every environment. It is multi-stage and its default
+target is `runner`, the production image; development asks for `target: dev` by
+name. There is no plain `docker-compose.yml` on purpose — a bare
+`docker compose up` fails with "no configuration file provided" rather than
+guessing an environment, which matters most on the VPS, where a stray
+`docker compose up` used to start the development stack beside production.
+
+```bash
+docker compose -f docker-compose.dev.yml  up -d --build   # local
+docker compose -f docker-compose.prod.yml up -d --build   # VPS
+```
+
+Each environment's `.env` names its own stack through `COMPOSE_FILE`, so a bare
+`docker compose up -d` does the right thing in either place and cannot reach
+the other's file.
+
+On the VPS this repo is cloned to `~/srv/folio/Folio-BE` and deploys from
+there; the frontend deploys the same way from `Folio-Web`. Set `FOLIO_DATA_DIR`
+in `.env` to keep Postgres, Redis and Ollama data outside the working tree
+(`/home/nus/srv/folio/data`); unset, it falls back to a gitignored `./data`.
+
+Provide `DATABASE_URL`, both token secrets, `CORS_ORIGIN`, `NODE_ENV=production`
+and `LOG_LEVEL=info` through the platform's secret store, leave
+`ENABLE_API_DOCS` unset, run `yarn db:migrate-prod` from a release job before
+starting the new version — `docker-compose.prod.yml` does this as the one-shot
+`folio-migrate` service — terminate HTTPS at the edge, and point health checks
+at `/health`.
 
 Deployment secrets: **contact SamHT.**
