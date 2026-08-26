@@ -113,6 +113,19 @@ const computeBreakpoints = (
   return breakpoints;
 };
 
+// Stages 5-6 without embeddings: heading changes alone. A spreadsheet's rows
+// are atomic and equidistant, so measuring distance between them decides
+// nothing the token ceiling in `assemblePassages` would not decide for free.
+export const structuralBreakpoints = (units: Unit[]): Set<number> => {
+  const breakpoints = new Set<number>();
+  for (let i = 0; i < units.length - 1; i++) {
+    if (sectionKey(units[i]) !== sectionKey(units[i + 1])) {
+      breakpoints.add(i);
+    }
+  }
+  return breakpoints;
+};
+
 // Stage 8 — merge a group of units into a passage and project citation
 // metadata (source block range, heading path, and unit ordering) so passages
 // remain resolvable to the original document.
@@ -172,14 +185,18 @@ export const assemblePassages = (
   return passages;
 };
 
-// Entry point for the pipeline. Performs TWO embedding passes:
+// Entry point for the pipeline. Performs up to TWO embedding passes:
 //   Pass 1 — embed pre-split units to find semantic breakpoints (job-scoped,
-//            never stored).
+//            never stored). Skipped for the structured types below.
 //   Pass 2 — embed the final assembled passages and persist them in pgvector.
 // The source is only activated (→ ready) after this completes successfully.
+//
+// Callers forward whatever type the extractor recorded; which of those skip
+// pass 1 is decided here.
 export const chunkAndEmbed = async (
   blocks: Block[],
-  sourceId: string
+  sourceId: string,
+  options: { structuredType?: string } = {}
 ): Promise<void> => {
   if (blocks.length === 0) {
     // No blocks → no passages; clear any stale rows from a previous run.
@@ -208,9 +225,12 @@ export const chunkAndEmbed = async (
     return;
   }
 
-  // Stage 4-6 — embed units (pass 1) and compute breakpoints.
-  const unitEmbeddings = await embedBatches(units.map((u) => u.text));
-  const breakpoints = computeBreakpoints(units, unitEmbeddings);
+  // Stage 4-6 — find breakpoints. Skipping pass 1 halves the model passes a
+  // spreadsheet costs to ingest.
+  const breakpoints =
+    options.structuredType === 'sheets'
+      ? structuralBreakpoints(units)
+      : computeBreakpoints(units, await embedBatches(units.map((u) => u.text)));
 
   // Stage 7-8 — assemble passages with locator metadata.
   const passages = assemblePassages(

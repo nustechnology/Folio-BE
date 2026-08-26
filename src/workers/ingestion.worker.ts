@@ -179,7 +179,9 @@ const worker = new Worker(
           blockCount: blocks.length
         }
       );
-      await chunkAndEmbed(blocks, sourceId);
+      await chunkAndEmbed(blocks, sourceId, {
+        structuredType: result.structuredContent?.type
+      });
       logger.info('[Worker] Chunking and embedding pipeline finished', {
         sourceId
       });

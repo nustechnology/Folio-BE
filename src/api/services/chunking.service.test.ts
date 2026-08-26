@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assemblePassages, type Unit } from '~/api/services/chunking.service';
+import {
+  assemblePassages,
+  structuralBreakpoints,
+  type Unit
+} from '~/api/services/chunking.service';
 import { estimateTokens } from '~/api/utils/embedding.util';
 
 // `charsPerUnit / 4` tokens each, since the text is pure ASCII.
@@ -109,5 +113,45 @@ describe('assemblePassages — locator metadata', () => {
     const passages = assemblePassages(makeUnits(3, 4), new Set(), NO_TOKEN_CUT);
 
     expect(passages[0].content).toBe('xxxx xxxx xxxx');
+  });
+});
+
+// Units carrying an explicit heading path, so section boundaries are the only
+// thing a breakpoint can key off.
+const makeSectionedUnits = (sections: string[]): Unit[] =>
+  sections.map((section, index) => ({
+    text: 'x'.repeat(40),
+    blockIndex: index,
+    order: index,
+    headingPath: [section]
+  }));
+
+describe('structuralBreakpoints', () => {
+  it('breaks where the heading path changes', () => {
+    const units = makeSectionedUnits(['A', 'A', 'B', 'B', 'C']);
+
+    // between index 1|2 and 3|4
+    expect(structuralBreakpoints(units)).toEqual(new Set([1, 3]));
+  });
+
+  it('finds nothing in a single section, leaving the token ceiling to cut', () => {
+    const units = makeSectionedUnits(['A', 'A', 'A', 'A']);
+
+    expect(structuralBreakpoints(units)).toEqual(new Set());
+    // Which is what a one-table CSV looks like: with no breakpoints at all,
+    // the ceiling cuts alone — 10 tokens a unit against a 20-token target.
+    expect(
+      assemblePassages(units, structuralBreakpoints(units), 20)
+    ).toHaveLength(2);
+  });
+
+  it('never breaks after the last unit', () => {
+    const units = makeSectionedUnits(['A', 'B']);
+
+    expect(structuralBreakpoints(units).has(1)).toBe(false);
+  });
+
+  it('returns nothing for no units', () => {
+    expect(structuralBreakpoints([])).toEqual(new Set());
   });
 });

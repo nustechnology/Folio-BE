@@ -154,7 +154,9 @@ const reembedSource = async (sourceId: string): Promise<'done' | 'skipped'> => {
   });
   await publishStatus(sourceId, 'indexing_evidence');
 
-  await chunkAndEmbed(normalizeToBlocks(source.content), sourceId);
+  await chunkAndEmbed(normalizeToBlocks(source.content), sourceId, {
+    structuredType: (source.structuredContent as { type?: string } | null)?.type
+  });
 
   await SourceRepository.update(sourceId, { processingState: 'ready' });
   await publishStatus(sourceId, 'ready');
