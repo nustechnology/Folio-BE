@@ -22,9 +22,28 @@ const NO_KEY_PLACEHOLDER = 'not-required';
 const client = new OpenAI({
   baseURL: env.MODEL_EMBEDDING_BASE_URL,
   apiKey: env.MODEL_EMBEDDING_API_KEY || NO_KEY_PLACEHOLDER,
+  // Embedding calls pass their own deadline; this is only a fallback.
   timeout: Number(env.MODEL_REQUEST_TIMEOUT_MS),
   maxRetries: Number(env.MODEL_MAX_RETRIES)
 });
+
+// Priced per text: one request costs a model pass per input, so retrieval
+// (a single query) and ingestion (a whole batch) cannot share a flat budget.
+const EMBED_TIMEOUT_PER_TEXT_MS = Math.max(
+  1,
+  Number(env.MODEL_EMBEDDING_TIMEOUT_MS_PER_TEXT) || 20_000
+);
+
+// Stay under undici's 300s bodyTimeout, or the request dies there as an opaque
+// "fetch failed" instead of a timeout naming the model. A batch that needs
+// longer wants a smaller CHUNK_EMBED_BATCH_SIZE, not a higher ceiling.
+const EMBED_TIMEOUT_CEILING_MS = 240_000;
+
+const embedTimeoutMs = (count: number): number =>
+  Math.min(
+    EMBED_TIMEOUT_CEILING_MS,
+    EMBED_TIMEOUT_PER_TEXT_MS * Math.max(1, count)
+  );
 
 // Metered providers bill every text inside a batched request separately, so one
 // call with 64 inputs spends 64 of the minute (Gemini's free tier allows 100).
@@ -183,10 +202,13 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
     for (let attempt = 0; ; attempt++) {
       await consumeRateLimit(texts.length);
       try {
-        response = await client.embeddings.create({
-          model: env.MODEL_EMBEDDING_MODEL,
-          input: texts
-        });
+        response = await client.embeddings.create(
+          {
+            model: env.MODEL_EMBEDDING_MODEL,
+            input: texts
+          },
+          { timeout: embedTimeoutMs(texts.length) }
+        );
         break;
       } catch (error) {
         if (!isRateLimitError(error) || attempt >= MAX_RATE_LIMIT_RETRIES) {
@@ -228,10 +250,14 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
     // Surface the real provider error (e.g. "401 Incorrect API key") so
     // ingestion failures are diagnosable instead of a generic 500.
     const detail = error instanceof Error ? error.message : String(error);
+    // "Request timed out." alone cannot tell a dead provider from a batch
+    // too big for its budget.
     logger.error('Embedding generation failed', {
       detail,
       model: env.MODEL_EMBEDDING_MODEL,
-      baseURL: env.MODEL_EMBEDDING_BASE_URL
+      baseURL: env.MODEL_EMBEDDING_BASE_URL,
+      batchSize: texts.length,
+      timeoutMs: embedTimeoutMs(texts.length)
     });
     throw new AppError(
       `Failed to generate embeddings: ${detail}`,

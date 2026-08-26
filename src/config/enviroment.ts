@@ -33,6 +33,7 @@ interface EnvInterface {
   MODEL_CHAT_MAX_TOKENS: string;
   MODEL_REQUEST_TIMEOUT_MS: string;
   MODEL_MAX_RETRIES: string;
+  MODEL_EMBEDDING_TIMEOUT_MS_PER_TEXT: string;
   MODEL_EMBEDDING_RPM: string;
   ASK_RETRIEVAL_CANDIDATES: string;
   ASK_RETRIEVAL_TOP_K: string;
@@ -45,6 +46,7 @@ interface EnvInterface {
   CHUNK_BREAKPOINT_PERCENTILE: string;
   CHUNK_EMBED_BATCH_SIZE: string;
   CHUNK_STRATEGY_VERSION: string;
+  INGESTION_CONCURRENCY: string;
   GEMINI_API_KEY: string;
   OCR_CHARS_PER_PAGE_THRESHOLD: string;
   OCR_REQUEST_TIMEOUT_MS: string;
@@ -119,15 +121,26 @@ export const env: EnvInterface = {
   // every text inside a batched request separately (Gemini's free tier allows
   // 100/min) throttle on this rather than on HTTP call count.
   MODEL_EMBEDDING_RPM: process.env.MODEL_EMBEDDING_RPM || '90',
+  // Separate from MODEL_REQUEST_TIMEOUT_MS, which is sized for one chat
+  // completion: an embedding request carries a batch and costs a model pass
+  // per text, so sharing that budget fails work that was merely slow.
+  MODEL_EMBEDDING_TIMEOUT_MS_PER_TEXT:
+    process.env.MODEL_EMBEDDING_TIMEOUT_MS_PER_TEXT || '20000',
   CHUNK_PRE_SPLIT_TOKENS: process.env.CHUNK_PRE_SPLIT_TOKENS || '160',
   CHUNK_TARGET_TOKENS: process.env.CHUNK_TARGET_TOKENS || '500',
   CHUNK_MAX_TOKENS: process.env.CHUNK_MAX_TOKENS || '800',
   CHUNK_OVERLAP_TOKENS: process.env.CHUNK_OVERLAP_TOKENS || '80',
   CHUNK_BREAKPOINT_PERCENTILE: process.env.CHUNK_BREAKPOINT_PERCENTILE || '90',
-  // Kept well under MODEL_EMBEDDING_RPM so batches pace smoothly.
-  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '30',
+  // Small on purpose: each text costs a model pass, so a large batch becomes
+  // one long request no deadline can make safe. Round trips are cheap. Raise
+  // it for a hosted provider — the RPM window meters texts, not requests.
+  CHUNK_EMBED_BATCH_SIZE: process.env.CHUNK_EMBED_BATCH_SIZE || '8',
   CHUNK_STRATEGY_VERSION:
     process.env.CHUNK_STRATEGY_VERSION || 'langchain-semantic-v1',
+  // Set to 1 when embeddings run on a local model with few cores: it
+  // serializes them anyway, so a second job adds no throughput and only
+  // doubles how long each embedding request waits.
+  INGESTION_CONCURRENCY: process.env.INGESTION_CONCURRENCY || '2',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   OCR_CHARS_PER_PAGE_THRESHOLD:
     process.env.OCR_CHARS_PER_PAGE_THRESHOLD || '50',

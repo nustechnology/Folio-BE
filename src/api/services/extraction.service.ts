@@ -33,6 +33,9 @@ export type ExtractInput = {
   // under a changed parser. A partial run leaves an untouched sibling with the
   // same checksum still ready, and reusing it would undo the run.
   forceReparse?: boolean;
+  // Text this source's earlier attempt persisted, set by the worker on a
+  // retry. Same bytes, same parser — re-parsing only re-pays the OCR bill.
+  previousExtraction?: ExtractResult | null;
 };
 
 export type ExtractResult = {
@@ -785,6 +788,16 @@ export const extract = async (input: ExtractInput): Promise<ExtractResult> => {
     sourceUrl: input.sourceUrl,
     fileType: input.fileType
   });
+
+  // A retry of a job that already got past extraction. What failed was
+  // downstream of here, so re-parsing only delays reaching it again.
+  if (input.previousExtraction && !input.forceReparse) {
+    logger.info("[Extractor] Reusing this attempt-chain's own extraction", {
+      sourceId: input.sourceId,
+      characterCount: input.previousExtraction.characterCount
+    });
+    return input.previousExtraction;
+  }
 
   if (input.sourceType === 'Manual') {
     logger.debug('[Extractor] Parsing manual text source');

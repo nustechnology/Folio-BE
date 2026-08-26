@@ -59,6 +59,23 @@ const worker = new Worker(
 
     // Extract raw text based on the source type (PDF/DOCX/MD/Web/Manual).
     // This may download the file from MinIO (file sources) or fetch a URL (web).
+    //
+    // On a retry, reuse the text the failed attempt persisted. File sources
+    // only: their bytes are fixed at upload, while Manual content still needs
+    // sanitizing and a Web page can change between attempts.
+    const previousExtraction =
+      job.attemptsMade > 0 &&
+      source.sourceType === 'File' &&
+      source.characterCount !== null &&
+      source.content.trim().length > 0
+        ? {
+            content: source.content,
+            structuredContent: source.structuredContent ?? undefined,
+            pageCount: source.pageCount ?? undefined,
+            characterCount: source.content.length
+          }
+        : null;
+
     let result;
     try {
       result = await extract({
@@ -68,7 +85,8 @@ const worker = new Worker(
         content: source.content,
         fileType: source.fileType,
         fileHash: source.fileHash,
-        forceReparse
+        forceReparse,
+        previousExtraction
       });
     } catch (error: any) {
       if (error instanceof OcrError || error.name === 'OcrError') {
@@ -185,7 +203,7 @@ const worker = new Worker(
   },
   {
     connection: redis,
-    concurrency: 2,
+    concurrency: Math.max(1, Number(env.INGESTION_CONCURRENCY) || 1),
     // The lock renews on a timer, so waiting (OCR, embeddings) is safe but
     // holding the event loop is not — pdfjs layout reconstruction and the
     // per-page marked/JSDOM pass both do, past the 30s default on a big file.
