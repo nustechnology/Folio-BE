@@ -44,11 +44,6 @@ x-folio-backend: &folio-backend
       condition: service_healthy
     folio-redis:
       condition: service_healthy
-    # Both the API and the worker embed text: the worker at ingestion
-    # (chunking.service.ts), the API on every question (retrieval.service.ts).
-    # Neither can do useful work before the model is loadable.
-    folio-ollama:
-      condition: service_healthy
     folio-migrate:
       condition: service_completed_successfully
 
@@ -146,37 +141,6 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
-
-  # Local embedding model. bge-m3 returns 1024 dimensions, matching the
-  # Passage.embedding column exactly, so no migration is needed. Measured on
-  # this box: ~2.4s to load the model, then ~80ms per text.
-  #
-  # Internal only — nothing outside this stack should reach it, and no host
-  # port is published. The API and worker address it as folio-ollama:11434.
-  folio-ollama:
-    image: ollama/ollama:latest
-    container_name: folio-ollama
-    restart: unless-stopped
-    environment:
-      # Keep the model resident. Ollama unloads after 5 minutes idle by
-      # default, and a cold reload costs ~2.4s — paid by whoever asks the
-      # first question after a quiet spell, since retrieval.service.ts embeds
-      # every query before searching. Costs ~2GB of RAM to avoid that.
-      OLLAMA_KEEP_ALIVE: "-1"
-    volumes:
-      # The pulled model lives here, so it survives container recreation and
-      # is not re-downloaded on every deploy.
-      - ${FOLIO_DATA_DIR:-./data}/ollama:/root/.ollama
-    networks:
-      - folio-internal
-    healthcheck:
-      # `ollama list` succeeds once the server is accepting requests. It does
-      # not verify the model is pulled — see the note in the runbook.
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 15s
-      timeout: 10s
-      start_period: 30s
       retries: 5
 
 networks:

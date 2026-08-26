@@ -313,7 +313,7 @@ JSON body.
 │   └── generated/prisma          # build artifact — never edit
 ├── Dockerfile                    # every environment — stages: deps, dev, builder, runner
 ├── docker-compose.dev.yml        # local stack: api, worker, db, redis, minio
-└── docker-compose.prod.yml       # VPS stack: adds migrate + ollama, uses shared MinIO
+└── docker-compose.prod.yml       # VPS stack: adds migrate, uses shared MinIO
 ```
 
 ---
@@ -428,7 +428,7 @@ the other's file.
 
 On the VPS this repo is cloned to `~/srv/folio/Folio-BE` and deploys from
 there; the frontend deploys the same way from `Folio-Web`. Set `FOLIO_DATA_DIR`
-in `.env` to keep Postgres, Redis and Ollama data outside the working tree
+in `.env` to keep Postgres and Redis data outside the working tree
 (`/home/nus/srv/folio/data`); unset, it falls back to a gitignored `./data`.
 
 Provide `DATABASE_URL`, both token secrets, `CORS_ORIGIN`, `NODE_ENV=production`
