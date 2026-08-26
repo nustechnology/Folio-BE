@@ -26,6 +26,7 @@ interface EnvInterface {
   MODEL_EMBEDDING_API_KEY: string;
   MODEL_EMBEDDING_MODEL: string;
   MODEL_EMBEDDING_DIMENSIONS: string;
+  MODEL_EMBEDDING_SEND_DIMENSIONS: string;
   MODEL_CHAT_BASE_URL: string;
   MODEL_CHAT_API_KEY: string;
   MODEL_CHAT_MODEL: string;
@@ -97,6 +98,10 @@ export const env: EnvInterface = {
   // enforces that they agree.
   MODEL_EMBEDDING_MODEL: process.env.MODEL_EMBEDDING_MODEL || 'bge-m3',
   MODEL_EMBEDDING_DIMENSIONS: process.env.MODEL_EMBEDDING_DIMENSIONS || '1024',
+  // Ask the provider for MODEL_EMBEDDING_DIMENSIONS rather than accepting its
+  // native width. Only for models that support it; others reject the parameter.
+  MODEL_EMBEDDING_SEND_DIMENSIONS:
+    process.env.MODEL_EMBEDDING_SEND_DIMENSIONS || 'false',
   // Generation runs through the same OpenAI-compatible surface as embeddings
   // and defaults to the embedding endpoint's host, so a single local Ollama (or
   // a single cloud key) serves both without extra configuration.

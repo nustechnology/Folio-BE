@@ -39,6 +39,12 @@ const EMBED_TIMEOUT_PER_TEXT_MS = Math.max(
 // longer wants a smaller CHUNK_EMBED_BATCH_SIZE, not a higher ceiling.
 const EMBED_TIMEOUT_CEILING_MS = 240_000;
 
+// Matryoshka-capable hosted models return their native width unless asked for
+// another — Gemini's is 3072 where "Passage"."embedding" is vector(1024). Off
+// by default: a provider that does not know the parameter can reject the whole
+// request, and a local model has one width anyway.
+const SEND_DIMENSIONS = env.MODEL_EMBEDDING_SEND_DIMENSIONS === 'true';
+
 const embedTimeoutMs = (count: number): number =>
   Math.min(
     EMBED_TIMEOUT_CEILING_MS,
@@ -182,7 +188,7 @@ const assertExpectedDimensions = (actual: number | undefined) => {
   }
 
   throw new AppError(
-    `Embedding model "${env.MODEL_EMBEDDING_MODEL}" returns ${actual} dimensions but the passage index expects ${expected}. Update MODEL_EMBEDDING_DIMENSIONS and migrate the "Passage"."embedding" column to match.`,
+    `Embedding model "${env.MODEL_EMBEDDING_MODEL}" returns ${actual} dimensions but the passage index expects ${expected}. If the provider supports Matryoshka truncation, set MODEL_EMBEDDING_SEND_DIMENSIONS=true to request ${expected}; otherwise update MODEL_EMBEDDING_DIMENSIONS and migrate the "Passage"."embedding" column to match.`,
     StatusCodes.INTERNAL_SERVER_ERROR,
     ErrorCode.EMBEDDING_FAILED
   );
@@ -205,7 +211,10 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
         response = await client.embeddings.create(
           {
             model: env.MODEL_EMBEDDING_MODEL,
-            input: texts
+            input: texts,
+            ...(SEND_DIMENSIONS
+              ? { dimensions: Number(env.MODEL_EMBEDDING_DIMENSIONS) }
+              : {})
           },
           { timeout: embedTimeoutMs(texts.length) }
         );
