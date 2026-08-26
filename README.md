@@ -198,11 +198,26 @@ All run inside the `api` container — `docker compose exec api yarn <command>`:
 | `db:generate` | Regenerate Prisma Client into `src/generated/prisma` |
 | `db:seed` | Seed spaces |
 | `db:seed:ask` | Seed ingested sources with embeddings |
-| `reingest` | Re-index every source against the current embedding model (`--help` for filters, `--reextract`, `--dry-run`) |
+| `reingest` | Re-index every source against the current embedding model (`--help` for filters, `--reextract`, `--dry-run`). Runs through `tsx`, so development only |
+| `reingest:prod` | The same script from `dist/` — the production image carries neither `tsx` nor `src/` |
 | `test` | Vitest, single run |
 | `typecheck` | `tsc --noEmit`, tests included |
 | `lint` | ESLint on `src/**/*.ts`, autofix |
 | `build` | Compile to `dist/` |
+
+Re-indexing on the VPS is the one command that is regularly needed there and
+cannot be copied from the table above. The service is `folio-backend`, not
+`api`, and `yarn` inside the container resolves through corepack as a non-root
+user, which prompts to download a second Yarn — so call node directly:
+
+```bash
+docker compose -f docker-compose.prod.yml exec folio-backend \
+  node dist/scripts/reingest-sources.js --dry-run
+```
+
+`--dry-run` lists what would be re-indexed and touches nothing. It does not
+verify the model against the column — that check runs only on a real pass, so a
+clean dry run does not mean the configured dimensions fit `Passage.embedding`.
 
 There is no CI — before pushing:
 
