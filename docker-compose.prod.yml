@@ -3,21 +3,16 @@
 #   cd ~/srv/folio/Folio-BE
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
-# There is deliberately no plain `docker-compose.yml` in this repo: a bare
-# `docker compose up` has to fail with "no configuration file provided" rather
-# than quietly starting the development stack on the server.
-#
-# The frontend is NOT here. It builds from the Folio-Web repo and is brought up
-# by that repo's docker-compose.prod.yml. The two stacks meet only on
-# shared-network, where Nginx routes to each by container name; the browser
-# calls the API through a relative /api/v1, so the frontend never resolves
-# folio-backend over Docker DNS.
+# There is deliberately no plain `docker-compose.yml`: a bare `docker compose
+# up` has to fail rather than quietly start the development stack on the
+# server. The frontend is a separate stack from the Folio-Web repo; the two
+# meet only on shared-network, where nginx routes to each by container name.
 name: folio
 
 # API and ingestion worker are the same image with the same wiring; only the
-# command differs. Without the worker, uploaded sources are accepted but never
-# leave `added` state — the BullMQ `ingestion` queue has no consumer.
-x-folio-backend: &folio-backend
+# command differs. Without the worker, sources never leave `added` — the BullMQ
+# `ingestion` queue has no consumer.
+x-folio-service: &folio-service
   build:
     context: .
     target: runner
@@ -26,16 +21,16 @@ x-folio-backend: &folio-backend
   env_file:
     - .env
   environment:
-    # Deployment-specific values only. NODE_ENV, PORT and MULTER_TEMP_DIR are
-    # set by the image; repeating them here would be duplication.
+    # Deployment-specific only. NODE_ENV, PORT and MULTER_TEMP_DIR come from
+    # the image.
     DATABASE_URL: postgresql://${FOLIO_DB_USER}:${FOLIO_DB_PASSWORD}@folio-db:5432/${FOLIO_DB_NAME}
     REDIS_HOST: folio-redis
     REDIS_PORT: "6379"
     MINIO_ENDPOINT: shared-minio
     MINIO_PORT: "9000"
     MINIO_USE_SSL: "false"
-    # enviroment.ts leaves CORS_ORIGIN empty in production when nothing is
-    # set, which rejects every browser request.
+    # enviroment.ts leaves this empty in production, which rejects every
+    # browser request.
     CORS_ORIGIN: https://${FOLIO_DOMAIN}
   volumes:
     - ${FOLIO_DATA_DIR:-./data}/backend-tmp:/app/tmp
@@ -48,23 +43,19 @@ x-folio-backend: &folio-backend
       condition: service_completed_successfully
 
 services:
-  # ---- reachable from nginx ----------------------------------------------
-
   folio-backend:
-    <<: *folio-backend
+    <<: *folio-service
     container_name: folio-backend
     networks:
       - shared-network    # nginx reaches it here; also its route to shared-minio
       - folio-internal    # folio-db + folio-redis
 
-  # ---- internal ------------------------------------------------------------
-
   folio-worker:
-    <<: *folio-backend
+    <<: *folio-service
     container_name: folio-worker
     command: ["node", "dist/workers/ingestion.worker.js"]
-    # On shared-network only because shared-minio lives there. It serves no
-    # HTTP and no vhost points at it.
+    # On shared-network only because shared-minio lives there; it serves no HTTP
+    # and no vhost points at it.
     networks:
       - shared-network
       - folio-internal
@@ -77,24 +68,21 @@ services:
       start_period: 40s
       retries: 3
 
-  # One-shot migration job, run from the builder stage because the runtime
-  # image ships without the Prisma CLI. Its own service rather than an
-  # entrypoint step, so API and worker cannot race to apply the same
-  # migrations on a cold start. Migration 20260803022112_add_passages runs
-  # CREATE EXTENSION vector, which succeeds because FOLIO_DB_USER is this
-  # instance's superuser.
+  # One-shot, from the builder stage because the runtime image ships without the
+  # Prisma CLI. Its own service so API and worker cannot race to apply the same
+  # migrations on a cold start.
   folio-migrate:
     build:
       context: .
       target: builder
     image: folio-backend-migrate:latest
     container_name: folio-migrate
-    # The one intentional exception to the restart policy: a job that must run
-    # to completion once, not a service.
+    # A job that must run to completion once, not a service — the one
+    # intentional exception to the restart policy.
     restart: "no"
     command: ["yarn", "db:migrate-prod"]
     environment:
-      # Needed here — the builder stage has none of the runner stage's ENV.
+      # The builder stage has none of the runner stage's ENV.
       NODE_ENV: production
       DATABASE_URL: postgresql://${FOLIO_DB_USER}:${FOLIO_DB_PASSWORD}@folio-db:5432/${FOLIO_DB_NAME}
     networks:
@@ -105,7 +93,7 @@ services:
 
   # pgvector, not stock postgres: schema.prisma declares extensions = [vector]
   # and Passage.embedding is vector(1024). Folio's own instance, so the shared
-  # postgres:18-alpine is left completely alone.
+  # postgres is left completely alone.
   folio-db:
     image: pgvector/pgvector:pg16
     container_name: folio-db
