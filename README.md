@@ -215,9 +215,10 @@ docker compose -f docker-compose.prod.yml exec folio-backend \
   node dist/scripts/reingest-sources.js --dry-run
 ```
 
-`--dry-run` lists what would be re-indexed and touches nothing. It does not
-verify the model against the column — that check runs only on a real pass, so a
-clean dry run does not mean the configured dimensions fit `Passage.embedding`.
+`--dry-run` lists what would be re-indexed and touches nothing, but still
+checks the configured dimensions against the actual `Passage.embedding` column
+first — so it is also the cheapest way to confirm a model swap before
+committing to a full pass.
 
 There is no CI — before pushing:
 

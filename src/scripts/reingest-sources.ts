@@ -186,6 +186,12 @@ const run = async (): Promise<number> => {
     return 0;
   }
 
+  // Ahead of the dry-run branch on purpose. Every mode ends in an INSERT of
+  // vectors of this width, so a stale column is the one failure worth knowing
+  // about before a real pass — and a dry run that skipped the check would
+  // report a clean run that is about to fail on every source.
+  await assertSchemaMatchesModel();
+
   if (options.dryRun) {
     for (const source of sources) {
       logger.info(`[Reingest] would re-index ${source.id} — ${source.title}`, {
@@ -196,12 +202,6 @@ const run = async (): Promise<number> => {
     }
     return 0;
   }
-
-  // Both modes end in an INSERT of vectors of this width — reembed does it here,
-  // reextract does it later in the worker. Checking up front in both cases turns
-  // a stale column into one clear error before anything is touched, instead of
-  // every queued source failing on a raw Postgres type error mid-run.
-  await assertSchemaMatchesModel();
 
   let done = 0;
   let skipped = 0;
