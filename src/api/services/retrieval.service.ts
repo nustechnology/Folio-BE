@@ -123,6 +123,8 @@ const toCitation = (
   sourceTitle: item.passage.sourceTitle,
   sourceType: item.passage.sourceType,
   sourceAuthor: item.passage.sourceAuthor,
+  sourceFileName: item.passage.sourceFileName,
+  sourceFileType: item.passage.sourceFileType,
   passageId: item.passage.id,
   snippet: item.passage.content,
   locationLabel: item.locationLabel,

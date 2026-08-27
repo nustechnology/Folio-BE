@@ -27,6 +27,9 @@ export type AnswerCitation = {
   sourceTitle: string;
   sourceType: SourceType;
   sourceAuthor: string | null;
+  /** Original upload name / MIME type; null for Web and Manual sources. */
+  sourceFileName: string | null;
+  sourceFileType: string | null;
   passageId: string;
   snippet: string;
   locationLabel: string | null;

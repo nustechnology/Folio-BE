@@ -2959,6 +2959,8 @@ export const openApiDocument = {
           'sourceTitle',
           'sourceType',
           'sourceAuthor',
+          'sourceFileName',
+          'sourceFileType',
           'passageId',
           'snippet',
           'locationLabel',
@@ -2987,6 +2989,17 @@ export const openApiDocument = {
           sourceAuthor: {
             type: 'string',
             nullable: true
+          },
+          sourceFileName: {
+            type: 'string',
+            nullable: true,
+            description:
+              'Original upload filename; `null` for Web and Manual sources. Lets the client label the medium (PDF, DOCX, …).'
+          },
+          sourceFileType: {
+            type: 'string',
+            nullable: true,
+            description: 'MIME type of the uploaded file; `null` for Web and Manual sources.'
           },
           passageId: {
             type: 'string',
@@ -3033,6 +3046,8 @@ export const openApiDocument = {
           'sourceTitle',
           'sourceType',
           'sourceAuthor',
+          'sourceFileName',
+          'sourceFileType',
           'passageId',
           'snippet',
           'locationLabel',
@@ -3061,6 +3076,17 @@ export const openApiDocument = {
           sourceAuthor: {
             type: 'string',
             nullable: true
+          },
+          sourceFileName: {
+            type: 'string',
+            nullable: true,
+            description:
+              'Original upload filename; `null` for Web and Manual sources. Lets the client label the medium (PDF, DOCX, …).'
+          },
+          sourceFileType: {
+            type: 'string',
+            nullable: true,
+            description: 'MIME type of the uploaded file; `null` for Web and Manual sources.'
           },
           passageId: {
             type: 'string',

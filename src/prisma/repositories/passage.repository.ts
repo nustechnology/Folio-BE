@@ -82,6 +82,7 @@ export type RetrievedPassage = {
   sourceTitle: string;
   sourceType: SourceType;
   sourceAuthor: string | null;
+  sourceFileName: string | null;
   sourceFileType: string | null;
   score: number;
 };
@@ -139,6 +140,7 @@ const searchHybrid = async (
       sourceTitle: string;
       sourceType: SourceType;
       sourceAuthor: string | null;
+      sourceFileName: string | null;
       sourceFileType: string | null;
       score: number;
     }>
@@ -184,6 +186,7 @@ const searchHybrid = async (
            s."title"    AS "sourceTitle",
            s."sourceType" AS "sourceType",
            s."author"   AS "sourceAuthor",
+           s."fileName" AS "sourceFileName",
            s."fileType" AS "sourceFileType",
            fused.score::float8 AS score
     FROM fused
