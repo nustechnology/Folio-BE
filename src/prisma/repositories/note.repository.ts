@@ -37,7 +37,14 @@ const citationDetailInclude = {
       citation: {
         include: {
           source: {
-            select: { id: true, title: true, sourceType: true, author: true }
+            select: {
+              id: true,
+              title: true,
+              sourceType: true,
+              author: true,
+              fileName: true,
+              fileType: true
+            }
           }
         }
       }

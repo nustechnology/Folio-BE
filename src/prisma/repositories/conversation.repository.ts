@@ -27,11 +27,31 @@ const isStoredMessage = (value: Prisma.JsonValue): value is StoredMessage => {
   );
 };
 
+/**
+ * Citation fields added after rows were first written are absent on older
+ * turns. Filling them here keeps `AnswerCitation` (and the OpenAPI `required`
+ * list) honest for every message the API returns, and write-back paths that
+ * re-spread parsed messages backfill the stored rows as a side effect.
+ */
+const normalizeMessage = (message: StoredMessage): StoredMessage => {
+  if (!message.citations) {
+    return message;
+  }
+  return {
+    ...message,
+    citations: message.citations.map((citation) => ({
+      ...citation,
+      sourceFileName: citation.sourceFileName ?? null,
+      sourceFileType: citation.sourceFileType ?? null
+    }))
+  };
+};
+
 const parseMessages = (value: Prisma.JsonValue): StoredMessage[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.filter(isStoredMessage);
+  return value.filter(isStoredMessage).map(normalizeMessage);
 };
 
 const create = async (data: {
