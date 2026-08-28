@@ -72,3 +72,37 @@ export const hashToken = async (token: string): Promise<string> => {
   const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
   return bcrypt.hash(token, salt);
 };
+
+export interface FileAccessTokenPayload {
+  sub: string;
+  typ: 'file';
+  iat: number;
+  exp: number;
+}
+
+// Authorises the "Open original" link, which a new tab cannot put a bearer
+// header on. Minted only after `getPreviewUrl` has checked ownership, and
+// pinned to that one source, so a leaked link opens nothing once it expires.
+const FILE_ACCESS_TOKEN_EXPIRATION = '5m';
+
+export const generateFileAccessToken = (sourceId: string): string => {
+  return jwt.sign({ sub: sourceId, typ: 'file' }, env.JWT_TOKEN_SECRET, {
+    ...TOKEN_CONFIG,
+    expiresIn: FILE_ACCESS_TOKEN_EXPIRATION
+  });
+};
+
+// `typ` is checked because access tokens share this secret, issuer and
+// audience — without it any bearer token would open any source id.
+export const verifyFileAccessToken = (
+  token: string
+): FileAccessTokenPayload => {
+  const payload = jwt.verify(
+    token,
+    env.JWT_TOKEN_SECRET
+  ) as FileAccessTokenPayload;
+  if (payload.typ !== 'file') {
+    throw new jwt.JsonWebTokenError('Not a file access token');
+  }
+  return payload;
+};

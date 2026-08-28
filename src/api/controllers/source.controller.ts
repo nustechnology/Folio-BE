@@ -12,6 +12,7 @@ import {
   createWebSourceSchema
 } from '~/api/routes/validators/source.validator';
 import { ListSourceOptions } from '~/api/types/source';
+import { sanitizeFileName } from '~/api/utils/file.util';
 
 const validate = async (schema: Joi.ObjectSchema, value: unknown) => {
   try {
@@ -125,6 +126,31 @@ const getPreviewUrl = async (req: Request, res: Response) => {
   return successResponse(res, { previewUrl });
 };
 
+// Serves the stored original for a File source. The browser reaches this by
+// navigating a new tab, which sends no Authorization header, so the signed
+// token in the query string authorises it instead. See SourceService.openFile.
+const getFile = async (req: Request, res: Response) => {
+  const { sourceId } = req.params;
+  const file = await SourceService.openFile(sourceId, String(req.query.token));
+
+  res.setHeader('Content-Type', file.contentType);
+  if (file.contentLength !== undefined) {
+    res.setHeader('Content-Length', String(file.contentLength));
+  }
+  // Inline so a PDF opens in the tab rather than downloading; the filename is
+  // what the browser saves it as.
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${sanitizeFileName(file.fileName)}"`
+  );
+  // Uploads are served from our own origin, so no content sniffing.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+
+  file.stream.on('error', () => res.destroy());
+  file.stream.pipe(res);
+};
+
 const status = async (req: Request, res: Response) => {
   await SseService.streamAllStatus(req.userId!, res);
 };
@@ -158,6 +184,7 @@ export default {
   remove,
   retry,
   getPreviewUrl,
+  getFile,
   getMedia,
   status
 };

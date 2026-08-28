@@ -21,3 +21,14 @@ export const getContentType = (fileName: string): string => {
     ? MIME_TYPE_MAP[ext] || 'application/octet-stream'
     : 'application/octet-stream';
 };
+
+// For Content-Disposition, where the name is a save-as hint rather than the
+// object's identity. A quote would close the filename token early and a
+// newline would break the header, so non-printable-ASCII is replaced outright.
+export const sanitizeFileName = (fileName: string): string => {
+  const cleaned = fileName
+    .replace(/[^\x20-\x7e]/g, '_')
+    .replace(/["\\]/g, '_')
+    .trim();
+  return cleaned.length > 0 ? cleaned.slice(0, 200) : 'download';
+};

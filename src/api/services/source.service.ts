@@ -5,13 +5,12 @@ import { StatusCodes } from 'http-status-codes';
 
 import { AppError } from '~/api/errors/app.error';
 import { ErrorCode } from '~/api/errors/error-codes';
-import { env } from '~/config/enviroment';
-import { BUCKET_NAME } from '~/config/minio';
 import { ListSourceOptions } from '~/api/types/source';
 import { getContentType } from '~/api/utils/file.util';
 import {
   deleteObject,
   deleteObjectsByPrefix,
+  getObjectStream,
   isObjectNotFoundError,
   normalizeStoredObjectKey,
   uploadFile
@@ -21,6 +20,11 @@ import {
   computeFileHash,
   verifyFileSignature
 } from '~/api/utils/signature.util';
+import {
+  FileAccessTokenPayload,
+  generateFileAccessToken,
+  verifyFileAccessToken
+} from '~/api/utils/token.util';
 import logger from '~/config/logger';
 import { enqueueIngestion } from '~/queues/ingestion.queue';
 import PassageRepository from '~/prisma/repositories/passage.repository';
@@ -391,13 +395,83 @@ const getPreviewUrl = async (
   }
 
   if (source.sourceType === 'File' && source.sourceUrl) {
-    const protocol = env.MINIO_USE_SSL === 'true' ? 'https' : 'http';
-    const host =
-      env.MINIO_ENDPOINT === 'minio' ? 'localhost' : env.MINIO_ENDPOINT;
-    return `${protocol}://${host}:${env.MINIO_PORT}/${BUCKET_NAME}/${source.sourceUrl}`;
+    // Not a direct object URL: MINIO_ENDPOINT names a container-network host
+    // ('minio' in dev, 'shared-minio' in production) that no browser can
+    // resolve, and the bucket is private. Relative like `mediaUrl`, so the
+    // client resolves whichever API host served it.
+    return `/api/v1/sources/${sourceId}/file?token=${generateFileAccessToken(
+      sourceId
+    )}`;
   }
 
   return null;
+};
+
+// Streams the stored original behind the reader's "Open original" link.
+// Ownership was checked when `getPreviewUrl` minted the token, not here.
+const openFile = async (sourceId: string, token: string) => {
+  let payload: FileAccessTokenPayload;
+  try {
+    payload = verifyFileAccessToken(token);
+  } catch {
+    throw new AppError(
+      'This link has expired. Reopen the source and try again.',
+      StatusCodes.UNAUTHORIZED,
+      ErrorCode.TOKEN_INVALID
+    );
+  }
+
+  // Without this, any valid token would open every file in the store.
+  if (payload.sub !== sourceId) {
+    throw new AppError(
+      'Source not found',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SOURCE_NOT_FOUND
+    );
+  }
+
+  const source = await SourceRepository.findById(sourceId);
+  if (!source || source.sourceType !== 'File' || !source.sourceUrl) {
+    throw new AppError(
+      'Source not found',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SOURCE_NOT_FOUND
+    );
+  }
+
+  try {
+    const object = await getObjectStream(
+      normalizeStoredObjectKey(source.sourceUrl)
+    );
+    return {
+      stream: object.stream,
+      // Both derive from the validated upload extension; either can be absent.
+      contentType:
+        object.contentType || source.fileType || 'application/octet-stream',
+      contentLength: object.contentLength,
+      fileName: source.fileName || 'download'
+    };
+  } catch (error) {
+    // As in getMedia: only an absent object is a 404, and the storage detail
+    // goes to the log rather than to the caller.
+    if (!isObjectNotFoundError(error)) {
+      logger.error('[Source] Object storage read failed', {
+        sourceId,
+        name: error instanceof Error ? error.name : typeof error,
+        detail: error instanceof Error ? error.message : String(error)
+      });
+      throw new AppError(
+        'Could not read the stored file',
+        StatusCodes.BAD_GATEWAY,
+        ErrorCode.INTERNAL_ERROR
+      );
+    }
+    throw new AppError(
+      'Stored file not found',
+      StatusCodes.NOT_FOUND,
+      ErrorCode.SOURCE_NOT_FOUND
+    );
+  }
 };
 
 // No ownership check: <img> tags carry no bearer token, so access is gated on
@@ -464,5 +538,6 @@ export default {
   remove,
   retry,
   getPreviewUrl,
+  openFile,
   getMedia
 };

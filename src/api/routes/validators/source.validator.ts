@@ -41,6 +41,13 @@ export const sourceMediaParamSchema = Joi.object({
     .required()
 });
 
+// Shape only — SourceService.openFile verifies the signature.
+export const sourceFileQuerySchema = Joi.object({
+  token: Joi.string().required().messages({
+    'any.required': 'A download token is required'
+  })
+});
+
 export const createWebSourceSchema = Joi.object({
   spaceId: spaceIdBodyField(),
   sourceType: sourceTypeField('Web'),

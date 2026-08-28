@@ -496,7 +496,7 @@ export const openApiDocument = {
         tags: ['Spaces'],
         summary: 'Delete a research space',
         description:
-          "Permanently deletes the space and everything under it — every source (with its indexed passages, citations, uploaded file and extracted images), every note, every conversation, and the notebook. This cannot be undone; archive the space instead (`PATCH` with `isArchived: true`) to hide it without losing anything. Stored files are removed before the database rows, and a storage failure aborts the delete with `503 STORAGE_CLEANUP_FAILED` rather than dropping the rows — the space is left intact and the request can be retried safely.",
+          'Permanently deletes the space and everything under it — every source (with its indexed passages, citations, uploaded file and extracted images), every note, every conversation, and the notebook. This cannot be undone; archive the space instead (`PATCH` with `isArchived: true`) to hide it without losing anything. Stored files are removed before the database rows, and a storage failure aborts the delete with `503 STORAGE_CLEANUP_FAILED` rather than dropping the rows — the space is left intact and the request can be retried safely.',
         operationId: 'deleteSpace',
         security: [{ bearerAuth: [] }],
         parameters: [{ $ref: '#/components/parameters/SpaceIdPath' }],
@@ -1046,7 +1046,7 @@ export const openApiDocument = {
         tags: ['Sources'],
         summary: 'Get preview URL or redirect to preview source',
         description:
-          'Constructs a public/anonymous preview URL for the source. If requested directly via a web browser (accepting text/html) or with `redirect=true` query parameter, it redirects to the MinIO object URL directly.',
+          'Returns the URL to open the original behind a source. A `Web` source resolves to its own absolute URL; a `File` source resolves to a root-relative path on this API (`/api/v1/sources/{sourceId}/file`) carrying a short-lived signed token, because object storage is only reachable on the internal container network and its bucket is private. If requested directly from a browser (accepting text/html) or with `redirect=true`, it redirects there instead of returning JSON.',
         operationId: 'getPreviewUrl',
         security: [
           {
@@ -1092,7 +1092,7 @@ export const openApiDocument = {
                         previewUrl: {
                           type: 'string',
                           example:
-                            'http://localhost:9000/folio-sources/sources/a24bc98e/paper.pdf'
+                            '/api/v1/sources/a24bc98e-0f1e-4c62-9d3a-7b1f5e2c8d40/file?token=eyJhbGciOiJIUzI1NiJ9...'
                         }
                       }
                     }
@@ -1102,7 +1102,7 @@ export const openApiDocument = {
             }
           },
           '302': {
-            description: 'Redirected to MinIO object storage preview URL'
+            description: 'Redirected to the preview URL'
           },
           '400': {
             description: 'Invalid source type for preview',
@@ -1129,6 +1129,90 @@ export const openApiDocument = {
           },
           '500': {
             $ref: '#/components/responses/InternalError'
+          }
+        }
+      }
+    },
+    '/api/v1/sources/{sourceId}/file': {
+      get: {
+        tags: ['Sources'],
+        summary: 'Download the original file behind a File source',
+        description:
+          'Streams the uploaded file back from object storage. Unauthenticated in the header sense by necessity — the browser reaches this by navigating a new tab, which sends no `Authorization` header — so the credential is the `token` query parameter, a short-lived signature issued by `GET /api/v1/sources/{sourceId}/preview` only after that endpoint has checked ownership. A token is valid for five minutes and for the single source it names.',
+        operationId: 'getSourceFile',
+        parameters: [
+          {
+            name: 'sourceId',
+            in: 'path',
+            required: true,
+            schema: {
+              type: 'string',
+              format: 'uuid'
+            }
+          },
+          {
+            name: 'token',
+            in: 'query',
+            required: true,
+            schema: {
+              type: 'string'
+            },
+            description:
+              'The signed token from the `previewUrl` returned by the preview endpoint.'
+          }
+        ],
+        responses: {
+          '200': {
+            description: 'File stream',
+            content: {
+              'application/octet-stream': {
+                schema: {
+                  type: 'string',
+                  format: 'binary'
+                }
+              }
+            }
+          },
+          '400': {
+            description: 'Malformed source id, or the token is missing',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '401': {
+            description: 'The token is invalid or has expired',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '404': {
+            description:
+              'No such source, the token names a different one, or the stored object is gone',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
+          },
+          '502': {
+            description: 'Object storage could not be read',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse'
+                }
+              }
+            }
           }
         }
       }
@@ -2999,7 +3083,8 @@ export const openApiDocument = {
           sourceFileType: {
             type: 'string',
             nullable: true,
-            description: 'MIME type of the uploaded file; `null` for Web and Manual sources.'
+            description:
+              'MIME type of the uploaded file; `null` for Web and Manual sources.'
           },
           passageId: {
             type: 'string',
@@ -3086,7 +3171,8 @@ export const openApiDocument = {
           sourceFileType: {
             type: 'string',
             nullable: true,
-            description: 'MIME type of the uploaded file; `null` for Web and Manual sources.'
+            description:
+              'MIME type of the uploaded file; `null` for Web and Manual sources.'
           },
           passageId: {
             type: 'string',

@@ -12,6 +12,7 @@ import {
 import { sourceIdParamSchema } from '~/api/routes/validators/common.validator';
 import {
   listSourcesQuerySchema,
+  sourceFileQuerySchema,
   sourceMediaParamSchema,
   updateSourceSchema
 } from '~/api/routes/validators/source.validator';
@@ -49,6 +50,15 @@ router.get(
   auth,
   validateParams(sourceIdParamSchema),
   asyncHandler(SourceController.getPreviewUrl)
+);
+
+// Deliberately not behind `auth`: a new tab sends no Authorization header, so
+// the signed `token` query parameter is the credential. See getFile.
+router.get(
+  '/:sourceId/file',
+  validateParams(sourceIdParamSchema),
+  validateQuery(sourceFileQuerySchema),
+  asyncHandler(SourceController.getFile)
 );
 
 // Deliberately not behind `auth`: see SourceController.getMedia.
