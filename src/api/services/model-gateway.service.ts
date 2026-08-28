@@ -195,9 +195,11 @@ const assertExpectedDimensions = (actual: number | undefined) => {
 };
 
 // Embed a list of texts into a list of vectors (one per input, in order).
-// Note: the SDK v6 defaults to `encoding_format: 'base64'` and decodes the
-// response itself, so `item.embedding` is always a plain number[] — callers
-// don't need to handle base64.
+// `encoding_format` is pinned because leaving it unset makes SDK v6 request
+// base64 and decode the reply itself. A provider that ignores the parameter and
+// answers with a plain number[] (Cloudflare Workers AI does) has that array run
+// through the decoder anyway, which returns a quarter-width vector of zeros
+// rather than an error.
 const embedTexts = async (texts: string[]): Promise<number[][]> => {
   if (texts.length === 0) {
     return [];
@@ -212,6 +214,7 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
           {
             model: env.MODEL_EMBEDDING_MODEL,
             input: texts,
+            encoding_format: 'float',
             ...(SEND_DIMENSIONS
               ? { dimensions: Number(env.MODEL_EMBEDDING_DIMENSIONS) }
               : {})
