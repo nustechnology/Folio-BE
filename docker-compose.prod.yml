@@ -21,8 +21,9 @@ x-folio-service: &folio-service
   env_file:
     - .env
   environment:
-    # Deployment-specific only. NODE_ENV, PORT and MULTER_TEMP_DIR come from
-    # the image.
+    # Deployment-specific only. NODE_ENV, PORT (3001) and MULTER_TEMP_DIR come
+    # from the image — but env_file outranks a Dockerfile ENV, so a PORT line in
+    # .env would move the listener off the port nginx proxies to.
     DATABASE_URL: postgresql://${FOLIO_DB_USER}:${FOLIO_DB_PASSWORD}@folio-db:5432/${FOLIO_DB_NAME}
     REDIS_HOST: folio-redis
     REDIS_PORT: "6379"

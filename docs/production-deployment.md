@@ -19,10 +19,12 @@ JWT_TOKEN_SECRET=<long-random-secret>
 Optional overrides:
 
 ```env
-PORT=4000
 LOG_LEVEL=info
 POSTGRES_PORT=5432
 ```
+
+Do **not** set `PORT` here — it outranks the image's `ENV` and moves the
+listener off `folio-backend:3001`, where nginx proxies.
 
 ## Deploy
 
@@ -42,7 +44,7 @@ docker compose run --rm api npx prisma migrate deploy
 docker compose up -d
 
 # 5. Verify the app is running
-curl http://localhost:4000/health
+curl http://localhost:3001/health
 # Expected: {"status":"ok","timestamp":"..."}
 ```
 
@@ -78,7 +80,7 @@ Migrations are **not** run automatically on container start to prevent race cond
 ## Architecture
 
 ```
-                         :4000
+                         :3001
     nginx / lb ───► api (node:22-alpine)
                         │
                         │ DATABASE_URL

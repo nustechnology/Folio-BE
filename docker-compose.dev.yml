@@ -48,7 +48,7 @@ services:
   api:
     <<: *folio-service
     ports:
-      - "${PORT:-4000}:${PORT:-4000}"
+      - "${PORT:-3001}:${PORT:-3001}"
 
   # Consumes the BullMQ `ingestion` queue; without it sources never leave
   # `added`. `yarn dev:worker` is only tsx watch, so db:generate must run first.

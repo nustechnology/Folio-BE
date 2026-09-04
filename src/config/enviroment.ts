@@ -66,7 +66,7 @@ if (!KNOWN_NODE_ENVS.includes(nodeEnv)) {
 }
 
 export const env: EnvInterface = {
-  SERVER_PORT: process.env.PORT || '',
+  SERVER_PORT: process.env.PORT || '3001',
   NODE_ENV: nodeEnv,
   LOG_LEVEL:
     process.env.LOG_LEVEL || (nodeEnv === 'production' ? 'info' : 'debug'),

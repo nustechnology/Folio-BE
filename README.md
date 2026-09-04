@@ -146,8 +146,8 @@ docker compose logs worker | grep -c 'Ingestion job fully completed'   # 4
 ### 8. Verify
 
 ```bash
-curl localhost:4000/health
-open http://localhost:4000/api-docs
+curl localhost:3001/health
+open http://localhost:3001/api-docs
 ```
 
 ---
@@ -176,7 +176,7 @@ docker compose exec api yarn db:migrate
 
 | Service | Address | Purpose |
 | --- | --- | --- |
-| `api` | `localhost:4000` | HTTP API, Swagger UI at `/api-docs` |
+| `api` | `localhost:3001` | HTTP API, Swagger UI at `/api-docs` |
 | `worker` | — | Consumes the BullMQ `ingestion` queue |
 | `db` | `localhost:5433` | `pgvector/pgvector:pg16` |
 | `redis` | `localhost:6379` | Queue backend |
@@ -320,7 +320,7 @@ JSON body.
 
 ## API
 
-Base URL `http://localhost:4000/api/v1`. See `/api-docs` for the full surface
+Base URL `http://localhost:3001/api/v1`. See `/api-docs` for the full surface
 with schemas and interactive examples — log in, select **Authorize** and paste
 the access token; Swagger adds the `Bearer` prefix itself.
 

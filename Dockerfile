@@ -39,7 +39,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Matches the PORT default in .env.example. Compose publishes it; unlike the
 # production stages this one is meant to be reachable from the host.
-EXPOSE 4000
+EXPOSE 3001
 CMD ["yarn", "dev"]
 
 # ---- build / migrations -----------------------------------------------------
@@ -60,7 +60,7 @@ FROM base AS runner
 # install below and would shell out to the Prisma CLI — a devDependency that is
 # deliberately absent here.
 ENV NODE_ENV=production \
-    PORT=5000 \
+    PORT=3001 \
     MULTER_TEMP_DIR=/app/tmp \
     PRISMA_SKIP_POSTINSTALL_GENERATE=true
 
@@ -90,9 +90,9 @@ USER node
 
 # Documentation only — no host port is published; Nginx reaches this by
 # container name over the shared Docker network.
-EXPOSE 5000
+EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD wget -qO /dev/null http://127.0.0.1:5000/health || exit 1
+  CMD wget -qO /dev/null http://127.0.0.1:3001/health || exit 1
 
 CMD ["node", "dist/index.js"]
