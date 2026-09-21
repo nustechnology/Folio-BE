@@ -1,16 +1,69 @@
-# Folio-BE
+# Folio-BE — Grounded Research API
 
-Backend for Folio, a grounded-QA notebook: sources (files, URLs, notes) are
-added to a space, parsed, chunked and embedded, then questions are answered
-from those sources with citations back into them.
+[![License](https://img.shields.io/badge/License-Non--Commercial-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-22.17.1-339933.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg)](https://www.typescriptlang.org/)
 
-Express + TypeScript, Prisma 7 on PostgreSQL with pgvector, a BullMQ ingestion
-worker, MinIO for object storage, and an OpenAI-compatible model gateway for
-embeddings and answer generation.
+**Folio-BE** is the backend for Folio, a grounded research notebook by
+[NUS Technology](https://www.nustechnology.com/). Users organize work into
+research spaces, add files, web pages and notes as evidence, then ask questions
+whose streamed answers include citations back to the indexed source passages.
 
-Everything runs in Docker. Ollama is the one exception — it stays on the host,
-because Docker Desktop gives containers no Metal access and a containerised
-Ollama is dramatically slower.
+The service combines an Express API with a separate BullMQ ingestion worker.
+PostgreSQL stores application data, full-text search indexes and pgvector
+embeddings; Redis coordinates background jobs and live status events; MinIO
+stores original uploads and extracted media; and OpenAI-compatible model
+endpoints provide embeddings and answer generation.
+
+- **Company:** [NUS Technology](https://www.nustechnology.com/)
+- **Repository:** [nustechnology/Folio-BE](https://github.com/nustechnology/Folio-BE)
+
+Everything runs in Docker during development. Ollama is the exception: it
+stays on the host because Docker Desktop gives containers no Metal access and
+a containerized Ollama is dramatically slower.
+
+## Table of contents
+
+- [Tech stack](#tech-stack)
+- [Prerequisites](#prerequisites)
+- [Setup](#setup)
+- [Daily use](#daily-use)
+- [Development commands](#development-commands)
+- [Environment configuration](#environment-configuration)
+- [System architecture](#system-architecture)
+- [Source ingestion flow](#source-ingestion-flow)
+- [Grounded-QA flow](#grounded-qa-flow)
+- [Data model](#data-model)
+- [Main API routes](#main-api-routes)
+- [Project conventions](#project-conventions)
+- [Logging and observability](#logging-and-observability)
+- [Deployment](#deployment)
+- [License](#license)
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+| --- | --- |
+| Runtime | Node.js 22.17.1, Yarn 4.12.0 |
+| API | Express 4, TypeScript 5.8 |
+| Validation | Joi |
+| Authentication | JWT access/refresh tokens, bcryptjs |
+| Database access | Prisma 7 with `@prisma/adapter-pg` |
+| Database | PostgreSQL 16 with pgvector |
+| Retrieval | HNSW cosine search + PostgreSQL full-text search, fused with Reciprocal Rank Fusion |
+| Background processing | BullMQ with Redis 7 |
+| Object storage | MinIO through the S3-compatible AWS SDK |
+| Document processing | pdfjs-dist, Mammoth, JSZip, Marked, Mozilla Readability, JSDOM |
+| Supported uploads | PDF, DOCX, TXT, Markdown, PPTX, XLSX, CSV, EPUB |
+| AI gateways | OpenAI-compatible chat and embedding APIs; Ollama for local `bge-m3` embeddings |
+| OCR | Google Gemini |
+| Streaming | Server-Sent Events for answers and ingestion status |
+| API documentation | OpenAPI 3.0 + Swagger UI |
+| Logging | Winston + request-scoped `AsyncLocalStorage` |
+| Testing | Vitest |
+| Packaging | Multi-stage Dockerfile + Docker Compose |
 
 ---
 
@@ -187,7 +240,7 @@ Host ports come from `POSTGRES_PORT`, `REDIS_PORT`, `MINIO_API_PORT` and
 
 ---
 
-## Commands
+## Development commands
 
 All run inside the `api` container — `docker compose exec api yarn <command>`:
 
@@ -228,7 +281,7 @@ docker compose exec api sh -c "yarn lint && yarn typecheck && yarn test"
 
 ---
 
-## Environment variables
+## Environment configuration
 
 `.env.example` is the reference: a short `REQUIRED` block, then every optional
 key with its default noted above it. Defaults live in
@@ -243,7 +296,38 @@ key with its default noted above it. Defaults live in
 
 ---
 
-## Architecture
+## System architecture
+
+```mermaid
+flowchart LR
+  Client["Folio web client"]
+  Ollama["Ollama on host<br/>bge-m3 embeddings"]
+  Chat["NUS model gateway<br/>answer generation"]
+  Gemini["Google Gemini<br/>PDF OCR"]
+
+  subgraph Backend["Folio-BE"]
+    API["Express API<br/>REST + SSE :3001"]
+    Worker["BullMQ ingestion worker"]
+    Redis[("Redis 7<br/>queue + pub/sub")]
+    MinIO[("MinIO<br/>originals + media")]
+    Postgres[("PostgreSQL 16<br/>Prisma + pgvector")]
+  end
+
+  Client -->|"JWT REST requests"| API
+  API -->|"SSE answers and status"| Client
+  API -->|"Prisma"| Postgres
+  API -->|"store/read objects"| MinIO
+  API -->|"enqueue ingestion"| Redis
+  Redis -->|"consume jobs"| Worker
+  Worker -->|"persist sources and passages"| Postgres
+  Worker -->|"read objects / write media"| MinIO
+  Worker -->|"publish status"| Redis
+  Worker -->|"OpenAI-compatible API"| Ollama
+  Worker -->|"scanned PDF pages"| Gemini
+  API -->|"embeddings + streamed completion"| Chat
+```
+
+The synchronous API follows a layered request path:
 
 ```text
 HTTP request
@@ -263,27 +347,6 @@ Repository              Prisma queries, strip sensitive fields
     v
 PostgreSQL + pgvector
 ```
-
-Ingestion runs out of band:
-
-```text
-POST /sources ──▶ MinIO (original file)
-            └──▶ BullMQ `ingestion` (Redis)
-                        |
-                        v
-                  worker container
-              extract → normalize → chunk → embed → index
-                        |
-                        v
-              Passage rows: embedding vector(1024) + searchVector tsvector
-```
-
-Asking a question resolves scope → `retrieval.service.ts` (hybrid search: HNSW
-cosine fused with tsvector by Reciprocal Rank Fusion, plus citation locators) →
-`ask-prompt.service.ts` (prompt and answer post-processing) →
-`model-gateway.service.ts` (streamed completion). The controller owns the SSE
-transport, so `POST /spaces/:spaceId/ask` streams rather than returning one
-JSON body.
 
 ### Directory structure
 
@@ -318,7 +381,134 @@ JSON body.
 
 ---
 
-## API
+## Source ingestion flow
+
+Sources may be uploaded files, web pages or manually entered text. File
+uploads are limited to 50 MiB and may be PDF, DOCX, TXT, Markdown, PPTX, XLSX,
+CSV or EPUB.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Client
+  participant API as Express API
+  participant Store as MinIO
+  participant Queue as BullMQ / Redis
+  participant Worker
+  participant Models as Ollama / Gemini
+  participant DB as PostgreSQL
+
+  Client->>API: POST /api/v1/sources
+  API->>API: authenticate and validate ownership
+  opt Uploaded file
+    API->>Store: store original bytes
+  end
+  API->>DB: create Source in added state
+  API->>Queue: enqueue ingest-source
+  API-->>Client: 201 Created
+  Queue->>Worker: deliver job
+  Worker->>DB: state = extracting_text
+  Worker->>Store: read original / write extracted media
+  Worker->>Models: OCR only when needed
+  Worker->>DB: save normalized content
+  Worker->>DB: state = indexing_evidence
+  Worker->>Models: embed semantic chunks
+  Worker->>DB: replace Passage rows and indexes
+  Worker->>DB: state = ready
+  Worker->>Queue: publish status transitions
+  Queue-->>API: Redis pub/sub
+  API-->>Client: GET /api/v1/sources/status SSE
+```
+
+The worker executes:
+
+```text
+extract → normalize → semantic chunk → embed → index
+```
+
+For byte-identical files, ingestion can reuse extraction output from another
+ready source owned by the same user. `yarn reingest --reextract` forces parsing
+again. Reader HTML is sanitized before storage; images extracted from DOCX and
+EPUB files are stored under `sources/<sourceId>/media/` in MinIO rather than
+inlined as data URIs.
+
+---
+
+## Grounded-QA flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Client
+  participant API as Ask controller
+  participant Retrieval
+  participant DB as PostgreSQL + pgvector
+  participant Model as Chat model
+
+  Client->>API: POST /api/v1/spaces/:spaceId/ask
+  API->>API: verify JWT and space ownership
+  API->>Retrieval: resolve space or source scope
+  Retrieval->>Model: embed question
+  Retrieval->>DB: vector + full-text search
+  DB-->>Retrieval: Reciprocal Rank Fusion results
+  Retrieval->>Retrieval: attach page and section locators
+  API->>Model: prompt with evidence and history
+  Model-->>API: streamed answer tokens
+  API-->>Client: start / token SSE events
+  API->>DB: persist messages and cited evidence
+  API-->>Client: citations / done SSE events
+```
+
+Only sources in the `ready` state are searchable. Retrieval embeds the
+question once, combines HNSW cosine similarity with PostgreSQL `tsvector`
+ranking, and fuses both lists with Reciprocal Rank Fusion. The prompt contains
+the retrieved evidence, limited conversation history, research objective and
+active scope.
+
+The controller owns the SSE transport. It streams named `start`, `token`,
+`citations`, `done` and `error` events, while the service persists the
+conversation and durable citation snapshots. When retrieval finds no evidence,
+the service returns a bounded no-evidence response rather than asking the
+model to answer from general knowledge.
+
+---
+
+## Data model
+
+```mermaid
+erDiagram
+  USER ||--o{ RESEARCH_SPACE : owns
+  RESEARCH_SPACE ||--o{ SOURCE : contains
+  RESEARCH_SPACE ||--o{ CONVERSATION : contains
+  RESEARCH_SPACE ||--o{ NOTE : contains
+  RESEARCH_SPACE ||--o| NOTEBOOK : has
+  SOURCE ||--o{ PASSAGE : indexed_as
+  SOURCE ||--o{ CITATION : supports
+  NOTE ||--o{ NOTE_CITATION : references
+  CITATION ||--o{ NOTE_CITATION : attached_to
+  CONVERSATION o|--o{ NOTE : originates
+  NOTE o|--o{ SOURCE : converted_to
+```
+
+| Model | Responsibility |
+| --- | --- |
+| `User` | Account credentials, refresh token and token-revocation version |
+| `ResearchSpace` | User-owned research objective and content boundary |
+| `Source` | File, web or manual evidence plus extraction state and reader content |
+| `Passage` | Semantic chunk, `vector(1024)` embedding, generated `tsvector` and locator |
+| `Conversation` | Ask history and active retrieval scope |
+| `Citation` | Durable snapshot of evidence used by an answer |
+| `Note` | User-authored or saved-answer working material |
+| `NoteCitation` | Ordered many-to-many link between a note and its citations |
+| `Notebook` | One auto-saved long-form document per research space |
+
+`Passage.embedding` uses an HNSW cosine index.
+`Passage.searchVector` is a generated PostgreSQL `tsvector` with a GIN index.
+Committed migrations contain the raw SQL Prisma cannot fully express.
+
+---
+
+## Main API routes
 
 Base URL `http://localhost:3001/api/v1`. See `/api-docs` for the full surface
 with schemas and interactive examples — log in, select **Authorize** and paste
@@ -351,7 +541,7 @@ Responses use `{ "status": "success", "data": {} }` or
 
 ---
 
-## Coding pattern
+## Project conventions
 
 Adding a feature, in order:
 
@@ -388,7 +578,7 @@ are declared in the schema anyway — as a `dbgenerated()` default and as plain
 
 ---
 
-## Logging
+## Logging and observability
 
 Winston, structured, with request context carried across async handlers by
 `AsyncLocalStorage`.
@@ -439,3 +629,15 @@ starting the new version — `docker-compose.prod.yml` does this as the one-shot
 at `/health`.
 
 Deployment secrets: **contact SamHT.**
+
+---
+
+## License
+
+This project is licensed under the
+[NUS Technology Non-Commercial License 1.0](LICENSE).
+
+Use, copying and modification are permitted only for personal, educational,
+research and non-commercial demonstration purposes. Commercial use and
+redistribution are not permitted. For commercial licensing, contact
+[NUS Technology](https://www.nustechnology.com/).
